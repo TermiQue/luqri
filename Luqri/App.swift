@@ -175,8 +175,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.showFeedback("已复制识别文字", icon: "check", at: anchor)
             }
         case .screenshotTranslate:
-            recognizeScreenshot { [weak self] text, anchor in
-                self?.showTranslation(text, at: anchor)
+            recognizeScreenshot { [weak self] text, _ in
+                self?.showTranslation(text)
             }
         }
     }
@@ -190,24 +190,24 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func translateSelection() {
-        let anchor = NSEvent.mouseLocation
         guard AXIsProcessTrusted() else {
-            showTranslation(at: anchor, needsSelectionPermission: true)
+            showTranslation(needsSelectionPermission: true)
             return
         }
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
               pid != ProcessInfo.processInfo.processIdentifier else {
-            showTranslation(at: anchor)
+            showTranslation()
             return
         }
+        let mouse = NSEvent.mouseLocation
         let top = NSScreen.screens.first?.frame.maxY ?? CGDisplayBounds(CGMainDisplayID()).height
-        let point = CGPoint(x: anchor.x, y: top - anchor.y)
+        let point = CGPoint(x: mouse.x, y: top - mouse.y)
         work = Task(priority: .userInitiated) { [weak self] in
             let text = await SelectedText.read(from: pid, at: point)
             guard let self, !Task.isCancelled else { return }
             self.work = nil
             let selection = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid ? text : nil
-            self.showTranslation(selection, at: anchor)
+            self.showTranslation(selection)
         }
     }
 
@@ -260,9 +260,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         clearFeedback()
     }
 
-    private func showTranslation(
-        _ input: String? = nil, at anchor: CGPoint = NSEvent.mouseLocation, needsSelectionPermission: Bool = false
-    ) {
+    private func showTranslation(_ input: String? = nil, needsSelectionPermission: Bool = false) {
+        let screen = NSScreen.main ?? NSScreen.screens.first
         closeTranslation()
         let input = input ?? ""
         let hasInput = input.hasNonWhitespace
@@ -298,13 +297,31 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         )
         let hosting = NSHostingController(rootView: view.clipShape(RoundedRectangle(cornerRadius: TranslationView.cornerRadius)))
+        hosting.sizingOptions = []
         panel.contentViewController = hosting
         if hasInput { model.begin(with: input) }
-        hosting.view.layoutSubtreeIfNeeded()
-        position(panel, contentSize: hosting.view.fittingSize, at: anchor)
+        let size = hosting.sizeThatFits(in: CGSize(width: TranslationView.preferredWidth, height: .greatestFiniteMagnitude))
+        if let screen {
+            panel.setFrame(translationFrame(contentSize: size, screen: screen.frame, visible: screen.visibleFrame), display: false)
+        } else {
+            panel.setContentSize(size)
+            panel.center()
+        }
         translationPanel = panel
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func translationFrame(contentSize: CGSize, screen: CGRect, visible: CGRect) -> CGRect {
+        let available = visible.insetBy(dx: 8, dy: 8)
+        let size = CGSize(width: min(contentSize.width, available.width), height: min(contentSize.height, available.height))
+        let x = (screen.midX - size.width / 2).rounded()
+        let y = (screen.midY + screen.height * 0.12 - size.height / 2).rounded()
+        return CGRect(
+            x: min(max(x, available.minX), available.maxX - size.width),
+            y: min(max(y, available.minY), available.maxY - size.height),
+            width: size.width, height: size.height
+        )
     }
 
     private func resizeTranslation(_ panel: UtilityPanel, contentSize: CGSize) {

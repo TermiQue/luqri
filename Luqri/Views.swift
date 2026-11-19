@@ -120,6 +120,7 @@ private struct TranslationLanguageMenu: View {
 }
 
 struct TranslationView: View {
+    static let preferredWidth: CGFloat = 420
     static let cornerRadius: CGFloat = 13
 
     @FocusState private var editorFocused: Bool
@@ -170,7 +171,7 @@ struct TranslationView: View {
             }
         }
         .padding(12)
-        .frame(width: 420)
+        .frame(width: Self.preferredWidth)
         .fixedSize(horizontal: false, vertical: true)
         .background(Color(nsColor: .textBackgroundColor))
         .overlay {
