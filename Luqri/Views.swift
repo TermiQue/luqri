@@ -65,6 +65,7 @@ struct TranslationView: View {
     @State private var speaker: AVSpeechSynthesizer?
     @State var showEmptyClipboardHint = false
 
+    let needsSelectionPermission: Bool
     @Bindable var model: TranslationModel
     let startsEditing: Bool
     let close: () -> Void
@@ -85,7 +86,17 @@ struct TranslationView: View {
             header
             editor
             languages
-            if !hasText && showEmptyClipboardHint {
+            if !hasText && needsSelectionPermission {
+                HStack {
+                    Text("读取选中文字需授权辅助功能")
+                    Spacer()
+                    Button("打开系统设置") { Permissions.openAccessibility() }
+                        .controlSize(.small)
+                }
+                .font(.system(size: 13))
+                .padding(10)
+                .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+            } else if !hasText && showEmptyClipboardHint {
                 clipboardHint
             }
             if model.enabledProviders.isEmpty {

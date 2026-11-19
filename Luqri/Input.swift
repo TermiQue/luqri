@@ -3,20 +3,16 @@ import Carbon
 import Observation
 import ApplicationServices
 
-enum Command: UInt32, CaseIterable, Codable {
+enum Command: UInt32, CaseIterable {
     case translate = 1
     case recognize
     case screenshotTranslate
-    case clipboardTranslate
-    case inputTranslate
 
     var title: String {
         switch self {
         case .translate: "划词翻译"
-        case .recognize: "截图识别并复制"
-        case .screenshotTranslate: "截图翻译"
-        case .clipboardTranslate: "翻译剪贴板"
-        case .inputTranslate: "输入文字翻译"
+        case .recognize: "OCR 识别"
+        case .screenshotTranslate: "OCR 翻译"
         }
     }
 
@@ -25,8 +21,6 @@ enum Command: UInt32, CaseIterable, Codable {
         case .translate: "languages"
         case .recognize: "scan-text"
         case .screenshotTranslate: "languages"
-        case .clipboardTranslate: "clipboard-paste"
-        case .inputTranslate: "keyboard"
         }
     }
 
@@ -35,8 +29,6 @@ enum Command: UInt32, CaseIterable, Codable {
         case .translate: (kVK_ANSI_T, "t")
         case .recognize: (kVK_ANSI_O, "o")
         case .screenshotTranslate: (kVK_ANSI_R, "r")
-        case .clipboardTranslate: (kVK_ANSI_V, "v")
-        case .inputTranslate: (kVK_ANSI_A, "a")
         }
         return Shortcut(keyCode: UInt32(code), modifiers: UInt32(optionKey | shiftKey), key: symbol)
     }
@@ -150,8 +142,13 @@ final class GlobalShortcuts {
         self.action = action
         self.onChange = onChange
         if let data = defaults.data(forKey: Self.preferencesKey),
-           let stored = try? JSONDecoder().decode([Command: Shortcut].self, from: data) {
-            bindings = Self.defaultBindings.merging(stored) { _, new in new }
+           let stored = try? JSONDecoder().decode([UInt32: Shortcut].self, from: data) {
+            bindings = Self.defaultBindings
+            for command in Command.allCases {
+                if let shortcut = stored[command.rawValue] {
+                    bindings[command] = shortcut
+                }
+            }
         } else {
             bindings = Self.defaultBindings
         }
@@ -264,7 +261,8 @@ final class GlobalShortcuts {
         } else {
             bindings = updated
             failed = conflicts
-            if let data = try? JSONEncoder().encode(updated) {
+            let stored = Dictionary(uniqueKeysWithValues: updated.map { ($0.key.rawValue, $0.value) })
+            if let data = try? JSONEncoder().encode(stored) {
                 defaults.set(data, forKey: Self.preferencesKey)
             }
             message = nil
@@ -300,36 +298,57 @@ final class GlobalShortcuts {
 }
 
 enum SelectedText {
-    static func read(from pid: pid_t) async -> String? {
-        guard !Task.isCancelled, AXIsProcessTrusted() else { return nil }
+    static func read(from pid: pid_t, at point: CGPoint) async -> String? {
+        guard !Task.isCancelled else { return nil }
         let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 0.18)
-        guard let focused = element(app, kAXFocusedUIElementAttribute) else { return nil }
+        AXUIElementSetMessagingTimeout(app, 0.15)
+        let deadline = ContinuousClock.now + .milliseconds(450)
+        var visited: [AXUIElement] = []
 
-        var current = focused
-        for _ in 0..<4 {
-            guard !Task.isCancelled else { return nil }
-            if let subrole = attribute(current, kAXSubroleAttribute) as? String,
-               subrole == kAXSecureTextFieldSubrole { return nil }
-            if let text = attribute(current, kAXSelectedTextAttribute) as? String,
-               text.hasNonWhitespace { return text }
-
-            if let range = attribute(current, kAXSelectedTextRangeAttribute),
-               CFGetTypeID(range) == AXValueGetTypeID() {
-                var selection = CFRange()
-                if AXValueGetValue(range as! AXValue, .cfRange, &selection), selection.length > 0 {
-                    var value: CFTypeRef?
-                    let status = AXUIElementCopyParameterizedAttributeValue(
-                        current, kAXStringForRangeParameterizedAttribute as CFString, range, &value
-                    )
-                    if status == .success, let text = value as? String,
-                       text.hasNonWhitespace { return text }
-                }
+        func search(from start: AXUIElement?) -> String? {
+            var current = start
+            for _ in 0..<12 {
+                guard let node = current, !Task.isCancelled, ContinuousClock.now < deadline,
+                      !visited.contains(where: { CFEqual($0, node) }) else { break }
+                visited.append(node)
+                if attribute(node, kAXSubroleAttribute) as? String == kAXSecureTextFieldSubrole { return nil }
+                if let text = textSelection(in: node) { return text }
+                current = element(node, kAXParentAttribute)
             }
-            guard let parent = element(current, kAXParentAttribute) else { break }
-            current = parent
+            return nil
+        }
+
+        if let text = search(from: element(app, kAXFocusedUIElementAttribute)) { return text }
+        guard !Task.isCancelled, ContinuousClock.now < deadline else { return nil }
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success else { return nil }
+        return search(from: hit)
+    }
+
+    private static func textSelection(in element: AXUIElement) -> String? {
+        if let text = attribute(element, kAXSelectedTextAttribute) as? String,
+           text.hasNonWhitespace { return text }
+
+        if let range = attribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(range) == AXValueGetTypeID() {
+            var selection = CFRange()
+            if AXValueGetValue(range as! AXValue, .cfRange, &selection), selection.length > 0,
+               let text = string(in: element, attribute: kAXStringForRangeParameterizedAttribute, range: range) {
+                return text
+            }
+        }
+
+        // Browser and rich-text engines can expose the selection as a text marker range.
+        if let range = attribute(element, "AXSelectedTextMarkerRange") {
+            return string(in: element, attribute: "AXStringForTextMarkerRange", range: range)
         }
         return nil
+    }
+
+    private static func string(in element: AXUIElement, attribute: String, range: CFTypeRef) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, attribute as CFString, range, &value) == .success,
+              let text = value as? String, text.hasNonWhitespace else { return nil }
+        return text
     }
 
     private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {

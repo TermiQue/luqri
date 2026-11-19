@@ -97,7 +97,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         for command in Command.allCases {
-            if command == .clipboardTranslate { menu.addItem(.separator()) }
             addItem(command.title, icon: command.icon, action: #selector(runCommand(_:)), to: menu) { entry in
                 entry.tag = Int(command.rawValue)
             }
@@ -179,10 +178,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             recognizeScreenshot { [weak self] text, anchor in
                 self?.showTranslation(text, at: anchor)
             }
-        case .clipboardTranslate:
-            showTranslation(Clipboard.text, showEmptyClipboardHint: true)
-        case .inputTranslate:
-            showTranslation()
         }
     }
 
@@ -196,13 +191,19 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func translateSelection() {
         let anchor = NSEvent.mouseLocation
+        guard AXIsProcessTrusted() else {
+            showTranslation(at: anchor, needsSelectionPermission: true)
+            return
+        }
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
               pid != ProcessInfo.processInfo.processIdentifier else {
             showTranslation(at: anchor)
             return
         }
+        let top = NSScreen.screens.first?.frame.maxY ?? CGDisplayBounds(CGMainDisplayID()).height
+        let point = CGPoint(x: anchor.x, y: top - anchor.y)
         work = Task(priority: .userInitiated) { [weak self] in
-            let text = await SelectedText.read(from: pid)
+            let text = await SelectedText.read(from: pid, at: point)
             guard let self, !Task.isCancelled else { return }
             self.work = nil
             let selection = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid ? text : nil
@@ -259,7 +260,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showTranslation(
-        _ input: String? = nil, at anchor: CGPoint = NSEvent.mouseLocation, showEmptyClipboardHint: Bool = false
+        _ input: String? = nil, at anchor: CGPoint = NSEvent.mouseLocation, needsSelectionPermission: Bool = false
     ) {
         closeTranslation()
         let input = input ?? ""
@@ -283,7 +284,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         }
         let view = TranslationView(
-            showEmptyClipboardHint: !hasInput && showEmptyClipboardHint,
+            needsSelectionPermission: needsSelectionPermission,
             model: model, startsEditing: !hasInput,
             close: { [weak self] in self?.closeTranslation() },
             openSettings: { [weak self] in self?.showSettings() },
