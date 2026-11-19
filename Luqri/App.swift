@@ -36,7 +36,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let overlay = SelectionOverlay()
     private var statusItem: NSStatusItem?
     private var shortcuts: GlobalShortcuts?
-    private var settingsKeyMonitor: Any?
+    private var applicationKeyMonitor: Any?
     private var translationPanel: UtilityPanel?
     private var settingsWindow: NSWindow?
     private var feedbackPanel: NSPanel?
@@ -53,16 +53,24 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         shortcuts.install()
         buildApplicationMenu()
         buildMenu()
-        settingsKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.shortcuts?.recording == nil, Shortcut.isSettingsEvent(event) else { return event }
-            if !event.isARepeat { self.showSettings() }
-            return nil
+        applicationKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.shortcuts?.recording == nil else { return event }
+            if Shortcut.isSettingsEvent(event) {
+                if !event.isARepeat { self.showSettings() }
+                return nil
+            }
+            if let window = self.settingsWindow, (event.window ?? NSApp.keyWindow) === window,
+               Shortcut.isPasteEvent(event), let editor = window.firstResponder as? NSTextView, editor.isEditable {
+                if !event.isARepeat, !Clipboard.pasteCredential(into: editor) { NSSound.beep() }
+                return nil
+            }
+            return event
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         shortcuts?.uninstall()
-        if let settingsKeyMonitor { NSEvent.removeMonitor(settingsKeyMonitor) }
+        if let applicationKeyMonitor { NSEvent.removeMonitor(applicationKeyMonitor) }
     }
 
     func applicationDidResignActive(_ notification: Notification) {

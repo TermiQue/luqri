@@ -81,8 +81,15 @@ struct Shortcut: Codable, Equatable {
     }
 
     static func isSettingsEvent(_ event: NSEvent) -> Bool {
-        [",", "，"].contains(event.charactersIgnoringModifiers ?? "")
-            && event.modifierFlags.intersection([.control, .option, .shift, .command]) == .command
+        hasCommandOnly(event) && [",", "，"].contains(event.charactersIgnoringModifiers ?? "")
+    }
+
+    static func isPasteEvent(_ event: NSEvent) -> Bool {
+        hasCommandOnly(event) && event.charactersIgnoringModifiers?.lowercased() == "v"
+    }
+
+    private static func hasCommandOnly(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection([.control, .option, .shift, .command]) == .command
     }
 
     var isSettingsShortcut: Bool { key == "," && modifiers == UInt32(cmdKey) }
@@ -358,6 +365,17 @@ enum Clipboard {
     private static var selectionCopy: Task<String?, Never>?
 
     static var text: String { NSPasteboard.general.string(forType: .string) ?? "" }
+
+    static func credentialText(from pasteboard: NSPasteboard = .general) -> String? {
+        let text = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    static func pasteCredential(into editor: NSTextView, from pasteboard: NSPasteboard = .general) -> Bool {
+        guard let text = credentialText(from: pasteboard) else { return false }
+        editor.insertText(text, replacementRange: editor.selectedRange())
+        return true
+    }
 
     static func textAfterSelectionCopy() async -> String {
         _ = await selectionCopy?.value

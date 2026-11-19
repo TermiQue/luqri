@@ -455,18 +455,26 @@ struct SettingsView: View {
     }
 
     private func credentialField(_ title: String, text: Binding<String>) -> some View {
-        HStack {
-            TextField(title, text: text)
-            Button {
-                Clipboard.write(text.wrappedValue)
-                status = "已复制 \(title)。"
-            } label: {
-                LucideIcon(name: "copy", size: 13)
+        LabeledContent(title) {
+            HStack(spacing: 7) {
+                TextField("", text: text)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 150)
+                    .accessibilityLabel(title)
+                Button {
+                    guard let pasted = Clipboard.credentialText() else {
+                        status = "剪贴板中没有可粘贴的文字。"
+                        return
+                    }
+                    text.wrappedValue = pasted
+                    status = ""
+                } label: {
+                    LucideIcon(name: "clipboard-paste", size: 13)
+                }
+                .buttonStyle(.borderless)
+                .help("粘贴 \(title)")
+                .accessibilityLabel("粘贴 \(title)")
             }
-            .buttonStyle(.borderless)
-            .help("复制 \(title)")
-            .accessibilityLabel("复制 \(title)")
-            .disabled(text.wrappedValue.isEmpty)
         }
     }
 
