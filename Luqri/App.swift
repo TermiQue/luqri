@@ -285,7 +285,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let view = TranslationView(
             needsSelectionPermission: needsSelectionPermission,
-            model: model, startsEditing: !hasInput,
+            model: model, isPanelKey: { [weak panel] in panel?.isKeyWindow == true },
             close: { [weak self] in self?.closeTranslation() },
             openSettings: { [weak self] in self?.showSettings() },
             setPinned: { [weak panel] pinned in panel?.hidesOnDeactivate = !pinned },
@@ -296,7 +296,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         )
-        let hosting = NSHostingController(rootView: view.clipShape(RoundedRectangle(cornerRadius: 13)))
+        let hosting = NSHostingController(rootView: view.clipShape(RoundedRectangle(cornerRadius: TranslationView.cornerRadius)))
         panel.contentViewController = hosting
         if hasInput { model.begin(with: input) }
         hosting.view.layoutSubtreeIfNeeded()

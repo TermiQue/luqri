@@ -56,8 +56,74 @@ final class UtilityPanel: NSPanel {
     }
 }
 
+private struct PanelButtonStyle: ButtonStyle {
+    var prominent = false
+    var cornerRadius: CGFloat = 6
+
+    func makeBody(configuration: Configuration) -> some View {
+        ButtonBody(configuration: configuration, prominent: prominent, cornerRadius: cornerRadius)
+    }
+
+    private struct ButtonBody: View {
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var hovered = false
+        let configuration: Configuration
+        let prominent: Bool
+        let cornerRadius: CGFloat
+
+        var body: some View {
+            configuration.label
+                .foregroundColor(prominent ? prominentTextColor : nil)
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: cornerRadius)
+                    if prominent {
+                        shape.fill(isEnabled ? Color.accentColor : Color.primary.opacity(0.09))
+                        if isEnabled {
+                            shape.fill(.black.opacity(configuration.isPressed ? 0.18 : hovered ? 0.08 : 0))
+                        }
+                    } else {
+                        shape.fill(.primary.opacity(isEnabled ? (configuration.isPressed ? 0.14 : hovered ? 0.075 : 0) : 0))
+                    }
+                }
+                .opacity(isEnabled || prominent ? 1 : 0.42)
+                .contentShape(Rectangle())
+                .onHover { hovered = $0 }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.1), value: hovered)
+        }
+
+        private var prominentTextColor: Color {
+            isEnabled ? Color(nsColor: .alternateSelectedControlTextColor) : .secondary
+        }
+    }
+}
+
+private struct TranslationLanguageMenu: View {
+    let title: String
+    let automatic: String
+    @Binding var selection: Language?
+    @State private var hovered = false
+
+    var body: some View {
+        Picker(title, selection: $selection) {
+            Text(automatic).tag(nil as Language?)
+            ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .buttonStyle(.borderless)
+        .frame(maxWidth: .infinity, minHeight: 28)
+        .background(.primary.opacity(hovered ? 0.075 : 0), in: RoundedRectangle(cornerRadius: 6))
+        .onHover { hovered = $0 }
+        .accessibilityLabel(title)
+    }
+}
+
 struct TranslationView: View {
+    static let cornerRadius: CGFloat = 13
+
     @FocusState private var editorFocused: Bool
+    @State private var didFocusEditor = false
     @State private var pinned = false
     @State private var collapsedProviders = Set<Provider>()
     @State private var copiedSource = false
@@ -67,7 +133,7 @@ struct TranslationView: View {
 
     let needsSelectionPermission: Bool
     @Bindable var model: TranslationModel
-    let startsEditing: Bool
+    let isPanelKey: () -> Bool
     let close: () -> Void
     let openSettings: () -> Void
     let setPinned: (Bool) -> Void
@@ -81,46 +147,42 @@ struct TranslationView: View {
         Binding(get: { model.text }, set: { model.edit($0) })
     }
 
+    private var card: some View {
+        RoundedRectangle(cornerRadius: 9).fill(.primary.opacity(0.055))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
             header
             editor
             languages
             if !hasText && needsSelectionPermission {
-                HStack {
-                    Text("读取选中文字需授权辅助功能")
-                    Spacer()
-                    Button("打开系统设置") { Permissions.openAccessibility() }
-                        .controlSize(.small)
-                }
-                .font(.system(size: 13))
-                .padding(10)
-                .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+                notice("读取选中文字需授权辅助功能", action: "打开系统设置") { Permissions.openAccessibility() }
             } else if !hasText && showEmptyClipboardHint {
                 clipboardHint
             }
             if model.enabledProviders.isEmpty {
-                HStack {
-                    Text("请先开启翻译服务").foregroundStyle(.secondary)
-                    Spacer()
-                    Button("打开设置", action: openSettings)
-                        .controlSize(.small)
-                }
-                .font(.system(size: 13))
-                .padding(10)
-                .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+                notice("请先开启翻译服务", action: "打开设置", perform: openSettings)
             } else {
                 ForEach(model.enabledProviders) { provider in
                     serviceRow(provider)
                 }
             }
         }
-        .padding(10)
+        .padding(12)
         .frame(width: 420)
         .fixedSize(horizontal: false, vertical: true)
-        .background(.regularMaterial)
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.cornerRadius)
+                .strokeBorder(.primary.opacity(0.15), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
         .onGeometryChange(for: CGSize.self, of: \.size, action: resize)
-        .onAppear { editorFocused = startsEditing }
+        .task { focusEditorOnOpen() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            focusEditorOnOpen()
+        }
         .onDisappear { speaker?.stopSpeaking(at: .immediate) }
         .onChange(of: model.text) {
             copiedSource = false
@@ -144,6 +206,31 @@ struct TranslationView: View {
         }
     }
 
+    private func focusEditorOnOpen() {
+        guard !didFocusEditor, isPanelKey() else { return }
+        didFocusEditor = true
+        editorFocused = true
+    }
+
+    private func notice(_ message: String, action: String, perform: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Text(message)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: perform) {
+                Text(action)
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 6)
+                    .frame(height: 26)
+            }
+            .buttonStyle(PanelButtonStyle())
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .background(card)
+    }
+
     private var header: some View {
         HStack(spacing: 4) {
             iconButton("pin", label: pinned ? "取消置顶" : "置顶浮窗") {
@@ -154,8 +241,8 @@ struct TranslationView: View {
             .accessibilityAddTraits(pinned ? .isSelected : [])
 
             Text("翻译")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
             Spacer()
             iconButton("settings-2", label: "设置", action: openSettings)
             iconButton("x", label: "关闭", action: close)
@@ -164,7 +251,7 @@ struct TranslationView: View {
     }
 
     private var editor: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .topLeading) {
                 if model.text.isEmpty {
                     Text("输入或粘贴文字")
@@ -180,9 +267,9 @@ struct TranslationView: View {
                     .accessibilityLabel("原文")
             }
             .font(.system(size: 14))
-            .frame(height: 52)
+            .frame(height: 64)
 
-            HStack(spacing: 1) {
+            HStack(spacing: 3) {
                 iconButton("volume-2", label: "朗读原文", action: speak)
                     .disabled(!hasText)
                 iconButton(copiedSource ? "check" : "copy", label: copiedSource ? "已复制" : "复制原文") {
@@ -192,50 +279,42 @@ struct TranslationView: View {
                 .disabled(!hasText)
                 iconButton("clipboard-paste", label: "翻译剪贴板", action: pasteAndTranslate)
                 Spacer()
-                Button("翻译", action: translate)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help("翻译（⌘↩）")
-                    .disabled(!hasText || model.enabledProviders.isEmpty)
+                Button(action: translate) {
+                    Text("翻译")
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .frame(height: 26)
+                }
+                .buttonStyle(PanelButtonStyle(prominent: true))
+                .keyboardShortcut(.return, modifiers: .command)
+                .help("翻译（⌘↩）")
+                .disabled(!hasText || model.enabledProviders.isEmpty)
             }
-            .padding(.horizontal, 2)
         }
-        .padding(7)
-        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+        .padding(8)
+        .background(card)
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 9)
                 .strokeBorder(editorFocused ? Color.accentColor.opacity(0.5) : .clear)
                 .allowsHitTesting(false)
         }
     }
 
     private var languages: some View {
-        HStack(spacing: 8) {
-            languagePicker("原文语言", automatic: "自动检测", selection: $model.source)
+        HStack(spacing: 5) {
+            TranslationLanguageMenu(title: "原文语言", automatic: "自动检测", selection: $model.source)
             iconButton("arrow-left-right", label: "交换语向") {
                 let source = model.source
                 model.source = model.target
                 model.target = source
             }
             .disabled(model.source == model.target)
-            languagePicker("译文语言", automatic: "自动选择", selection: $model.target)
+            TranslationLanguageMenu(title: "译文语言", automatic: "自动选择", selection: $model.target)
         }
-        .padding(.horizontal, 9)
-        .frame(height: 30)
-        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func languagePicker(_ title: String, automatic: String, selection: Binding<Language?>) -> some View {
-        Picker(title, selection: selection) {
-            Text(automatic).tag(nil as Language?)
-            ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
-        }
-        .labelsHidden()
-        .pickerStyle(.menu)
-        .buttonStyle(.borderless)
+        .padding(.horizontal, 4)
         .frame(maxWidth: .infinity)
-        .accessibilityLabel(title)
+        .frame(height: 36)
+        .background(card)
     }
 
     private var clipboardHint: some View {
@@ -247,7 +326,7 @@ struct TranslationView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+        .background(card)
     }
 
     private func serviceRow(_ provider: Provider) -> some View {
@@ -271,17 +350,17 @@ struct TranslationView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 10)
-                .frame(height: 30)
+                .frame(height: 34)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PanelButtonStyle(cornerRadius: 9))
             .accessibilityValue(expanded ? "已展开" : "已折叠")
             if expanded {
                 Divider().padding(.horizontal, 10)
                 serviceOutput(output, for: provider)
             }
         }
-        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+        .background(card)
         .onChange(of: output) {
             if copiedResult == provider { copiedResult = nil }
         }
@@ -331,10 +410,10 @@ struct TranslationView: View {
     private func iconButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             LucideIcon(name: icon, size: 14)
-                .frame(width: 23, height: 23)
+                .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(PanelButtonStyle())
         .help(label)
         .accessibilityLabel(label)
     }
