@@ -119,7 +119,7 @@ private final class SelectionOverlay {
                 )
                 self?.finish(selection)
             }
-            panel.setFrame(frame, display: true)
+            panel.setFrame(frame, display: false)
             panel.orderFrontRegardless()
             windows.append(panel)
         }
@@ -146,6 +146,15 @@ private final class SelectionOverlay {
 
 @MainActor
 private final class SelectionView: NSView {
+    private static let hint = NSAttributedString(
+        string: "拖动框选文字   ·   Esc 取消",
+        attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.white
+        ]
+    )
+    private static let hintSize = hint.size()
+
     private let hasHint: Bool
     private let onSelection: (CGRect, CGPoint) -> Void
     private var start: CGPoint?
@@ -167,6 +176,7 @@ private final class SelectionView: NSView {
     }
 
     override func draw(_ dirtyRect: CGRect) {
+        NSGraphicsContext.current?.cgContext.clear(dirtyRect)
         let overlay = NSBezierPath(rect: bounds)
         if !selection.isEmpty { overlay.appendRect(selection) }
         overlay.windingRule = .evenOdd
@@ -178,51 +188,57 @@ private final class SelectionView: NSView {
             let border = NSBezierPath(rect: selection)
             border.lineWidth = 1
             border.stroke()
-        } else if hasHint {
-            let hint = NSAttributedString(
-                string: "拖动框选文字   ·   Esc 取消",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-                    .foregroundColor: NSColor.white
-                ]
-            )
-            let size = hint.size()
-            let frame = CGRect(x: bounds.midX - size.width / 2, y: 54, width: size.width, height: size.height)
+        } else if hasHint, dirtyRect.intersects(hintBackground) {
             NSColor.black.withAlphaComponent(0.72).setFill()
-            NSBezierPath(roundedRect: frame.insetBy(dx: -14, dy: -8), xRadius: 7, yRadius: 7).fill()
-            hint.draw(in: frame)
+            NSBezierPath(roundedRect: hintBackground, xRadius: 7, yRadius: 7).fill()
+            Self.hint.draw(in: hintFrame)
         }
     }
 
+    private var hintFrame: CGRect {
+        let size = Self.hintSize
+        return CGRect(x: bounds.midX - size.width / 2, y: 54, width: size.width, height: size.height)
+    }
+
+    private var hintBackground: CGRect { hintFrame.insetBy(dx: -14, dy: -8) }
+
     override func mouseDown(with event: NSEvent) {
         start = location(event)
-        selection = .zero
-        needsDisplay = true
+        setSelection(.zero)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        updateSelection(to: location(event))
+        setSelection(selection(to: location(event)))
     }
 
     override func mouseUp(with event: NSEvent) {
         let end = location(event)
-        updateSelection(to: end)
+        let final = selection(to: end)
         start = nil
-        guard selection.width >= 4, selection.height >= 4 else {
-            selection = .zero
-            needsDisplay = true
+        guard final.width >= 4, final.height >= 4 else {
+            setSelection(.zero)
             return
         }
-        onSelection(selection.integral.intersection(bounds), end)
+        onSelection(final.integral.intersection(bounds), end)
     }
 
-    private func updateSelection(to point: CGPoint) {
-        guard let start else { return }
-        selection = CGRect(
+    private func selection(to point: CGPoint) -> CGRect {
+        guard let start else { return .zero }
+        return CGRect(
             x: min(start.x, point.x), y: min(start.y, point.y),
             width: abs(start.x - point.x), height: abs(start.y - point.y)
         )
-        needsDisplay = true
+    }
+
+    private func setSelection(_ next: CGRect) {
+        let previous = selection
+        guard previous != next else { return }
+        selection = next
+        let affected = previous.isEmpty ? next : next.isEmpty ? previous : previous.union(next)
+        if !affected.isEmpty { setNeedsDisplay(affected.insetBy(dx: -1, dy: -1).integral) }
+        if hasHint, previous.isEmpty != next.isEmpty {
+            setNeedsDisplay(hintBackground.insetBy(dx: -1, dy: -1).integral)
+        }
     }
 
     private func location(_ event: NSEvent) -> CGPoint {

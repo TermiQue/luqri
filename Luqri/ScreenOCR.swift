@@ -14,7 +14,18 @@ enum ScreenOCR {
         request.recognitionLevel = .accurate
         request.automaticallyDetectsLanguage = true
         request.usesLanguageCorrection = true
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        let cancellation = RequestCancellation(request: request)
+        do {
+            try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                try VNImageRequestHandler(cgImage: image).perform([request])
+            } onCancel: {
+                cancellation.cancel()
+            }
+        } catch {
+            try Task.checkCancellation()
+            throw error
+        }
         try Task.checkCancellation()
         let lines = request.results?.compactMap { observation -> OCRLine? in
             guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -26,9 +37,14 @@ enum ScreenOCR {
         return text
     }
 
+    // Vision supports aborting an in-flight request. Only cancel() crosses executors.
+    private struct RequestCancellation: @unchecked Sendable {
+        let request: VNRequest
+        func cancel() { request.cancel() }
+    }
 }
 
-struct OCRLine {
+private struct OCRLine {
     let text: String
     let bounds: CGRect
 

@@ -73,7 +73,7 @@ struct TranslationView: View {
     let resize: (CGSize) -> Void
 
     private var hasText: Bool {
-        !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        model.text.hasNonWhitespace
     }
 
     private var editorText: Binding<String> {
@@ -335,7 +335,7 @@ struct TranslationView: View {
 
     private func pasteAndTranslate() {
         let input = Clipboard.text
-        guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard input.hasNonWhitespace else {
             if !hasText { showEmptyClipboardHint = true }
             editorFocused = true
             return

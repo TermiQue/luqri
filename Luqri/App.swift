@@ -201,8 +201,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             showTranslation(at: anchor)
             return
         }
-        work = Task { [weak self] in
-            let text = await Task.detached(priority: .userInitiated) { SelectedText.read(from: pid) }.value
+        work = Task(priority: .userInitiated) { [weak self] in
+            let text = await SelectedText.read(from: pid)
             guard let self, !Task.isCancelled else { return }
             self.work = nil
             let selection = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid ? text : nil
@@ -263,7 +263,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) {
         closeTranslation()
         let input = input ?? ""
-        let hasInput = !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasInput = input.hasNonWhitespace
         let panel = UtilityPanel(contentRect: .zero, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
         panel.level = .floating
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .ignoresCycle]
@@ -278,7 +278,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.onEscape = { [weak self] in self?.closeTranslation() }
         panel.onEditorReturn = { [weak model] in
             guard let model, !model.enabledProviders.isEmpty,
-                  !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+                  model.text.hasNonWhitespace else { return false }
             model.translate()
             return true
         }
@@ -297,7 +297,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         let hosting = NSHostingController(rootView: view.clipShape(RoundedRectangle(cornerRadius: 13)))
         panel.contentViewController = hosting
-        model.begin(with: hasInput ? input : "")
+        if hasInput { model.begin(with: input) }
         hosting.view.layoutSubtreeIfNeeded()
         position(panel, contentSize: hosting.view.fittingSize, at: anchor)
         translationPanel = panel

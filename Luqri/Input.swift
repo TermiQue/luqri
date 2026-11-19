@@ -30,28 +30,15 @@ enum Command: UInt32, CaseIterable, Codable {
         }
     }
 
-    var key: String {
-        switch self {
-        case .translate: "t"
-        case .recognize: "o"
-        case .screenshotTranslate: "r"
-        case .clipboardTranslate: "v"
-        case .inputTranslate: "a"
-        }
-    }
-
-    var keyCode: UInt32 {
-        switch self {
-        case .translate: UInt32(kVK_ANSI_T)
-        case .recognize: UInt32(kVK_ANSI_O)
-        case .screenshotTranslate: UInt32(kVK_ANSI_R)
-        case .clipboardTranslate: UInt32(kVK_ANSI_V)
-        case .inputTranslate: UInt32(kVK_ANSI_A)
-        }
-    }
-
     var defaultShortcut: Shortcut {
-        Shortcut(keyCode: keyCode, modifiers: UInt32(optionKey | shiftKey), key: key)
+        let (code, symbol): (Int, String) = switch self {
+        case .translate: (kVK_ANSI_T, "t")
+        case .recognize: (kVK_ANSI_O, "o")
+        case .screenshotTranslate: (kVK_ANSI_R, "r")
+        case .clipboardTranslate: (kVK_ANSI_V, "v")
+        case .inputTranslate: (kVK_ANSI_A, "a")
+        }
+        return Shortcut(keyCode: UInt32(code), modifiers: UInt32(optionKey | shiftKey), key: symbol)
     }
 }
 
@@ -313,18 +300,19 @@ final class GlobalShortcuts {
 }
 
 enum SelectedText {
-    static func read(from pid: pid_t) -> String? {
-        guard AXIsProcessTrusted() else { return nil }
+    static func read(from pid: pid_t) async -> String? {
+        guard !Task.isCancelled, AXIsProcessTrusted() else { return nil }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.18)
         guard let focused = element(app, kAXFocusedUIElementAttribute) else { return nil }
 
         var current = focused
         for _ in 0..<4 {
+            guard !Task.isCancelled else { return nil }
             if let subrole = attribute(current, kAXSubroleAttribute) as? String,
                subrole == kAXSecureTextFieldSubrole { return nil }
             if let text = attribute(current, kAXSelectedTextAttribute) as? String,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
+               text.hasNonWhitespace { return text }
 
             if let range = attribute(current, kAXSelectedTextRangeAttribute),
                CFGetTypeID(range) == AXValueGetTypeID() {
@@ -335,7 +323,7 @@ enum SelectedText {
                         current, kAXStringForRangeParameterizedAttribute as CFString, range, &value
                     )
                     if status == .success, let text = value as? String,
-                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
+                       text.hasNonWhitespace { return text }
                 }
             }
             guard let parent = element(current, kAXParentAttribute) else { break }

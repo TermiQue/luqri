@@ -50,18 +50,12 @@ enum Language: String, CaseIterable, Identifiable {
 
     var locale: Locale.Language { Locale.Language(identifier: rawValue) }
 
-    var cloudCode: String {
-        switch self {
-        case .simplifiedChinese: "zh"
-        case .traditionalChinese: "zh-Hant"
-        default: rawValue
-        }
-    }
+    var cloudCode: String { self == .simplifiedChinese ? "zh" : rawValue }
 
     var isChinese: Bool { self == .simplifiedChinese || self == .traditionalChinese }
 }
 
-struct TranslationJob: Identifiable {
+struct TranslationJob {
     let id = UUID()
     let text: String
     let provider: Provider
@@ -82,7 +76,7 @@ enum TranslationOutput: Equatable {
 final class TranslationModel {
     private let defaults: UserDefaults
 
-    var text = ""
+    private(set) var text = ""
     var source: Language? {
         didSet { if source != oldValue { changeLanguages() } }
     }
@@ -131,14 +125,16 @@ final class TranslationModel {
     }
 
     func begin(with input: String) {
-        text = input
+        edit(input)
         translate()
     }
 
     func translate() {
-        clearResults()
+        guard !selectedProviders.isEmpty,
+              !isTranslating || !selectedProviders.allSatisfy({ outputs[$0] != nil }) else { return }
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty, !selectedProviders.isEmpty else { return }
+        guard !input.isEmpty else { return }
+        clearResults()
         let destination = target ?? automaticTarget(for: input)
         for provider in enabledProviders {
             let job = TranslationJob(text: input, provider: provider, source: source, target: destination)
@@ -147,11 +143,7 @@ final class TranslationModel {
             if provider == .volcengine {
                 cloudTask = Task { [weak self] in
                     do {
-                        try Task.checkCancellation()
-                        guard let credentials = try CloudCredentials.load() else {
-                            throw VolcengineError.missingCredentials
-                        }
-                        let translation = try await Volcengine.translate(job, credentials: credentials)
+                        let translation = try await Volcengine.translate(job)
                         self?.finish(job, with: .success(translation))
                     } catch {
                         self?.finish(job, with: .failure(error))
@@ -180,8 +172,7 @@ final class TranslationModel {
     }
 
     func reset() {
-        clearResults()
-        text = ""
+        edit("")
     }
 
     private func automaticTarget(for input: String) -> Language {
@@ -202,6 +193,7 @@ final class TranslationModel {
     }
 
     private func clearResults() {
+        guard !outputs.isEmpty else { return }
         activeJobs.removeAll()
         cloudTask?.cancel()
         cloudTask = nil
@@ -232,5 +224,12 @@ final class TranslationModel {
         default:
             return "Apple 翻译未完成。请确认语言已下载，再试一次。"
         }
+    }
+}
+
+extension String {
+    var hasNonWhitespace: Bool {
+        let whitespace = CharacterSet.whitespacesAndNewlines
+        return unicodeScalars.contains { !whitespace.contains($0) }
     }
 }

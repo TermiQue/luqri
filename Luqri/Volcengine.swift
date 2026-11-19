@@ -57,6 +57,10 @@ enum Volcengine {
     private static let host = "translate.volcengineapi.com"
     private static let query = "Action=TranslateText&Version=2020-06-01"
     private static let endpoint = URL(string: "https://\(host)/?\(query)")!
+    private static let timestampStyle = Date.ISO8601FormatStyle(
+        dateSeparator: .omitted, timeSeparator: .omitted, timeZoneSeparator: .omitted
+    )
+    private static let hexDigits = Array("0123456789abcdef".utf8)
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
@@ -94,7 +98,9 @@ enum Volcengine {
         let TranslationList: [Translation]?
     }
 
-    static func translate(_ job: TranslationJob, credentials: CloudCredentials) async throws -> String {
+    static func translate(_ job: TranslationJob) async throws -> String {
+        try Task.checkCancellation()
+        guard let credentials = try CloudCredentials.load() else { throw VolcengineError.missingCredentials }
         var translated = ""
         var source = job.source?.cloudCode
         for chunk in chunks(of: job.text) {
@@ -119,17 +125,15 @@ enum Volcengine {
                 throw VolcengineError.emptyResult
             }
             if source == nil { source = translation.DetectedSourceLanguage }
-            translated += chunk[..<range.lowerBound] + translation.Translation + chunk[range.upperBound...]
+            translated.append(contentsOf: chunk[..<range.lowerBound])
+            translated += translation.Translation
+            translated.append(contentsOf: chunk[range.upperBound...])
         }
         return translated
     }
 
     static func signedRequest(payload: Data, credentials: CloudCredentials, date: Date) -> URLRequest {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
-        let timestamp = formatter.string(from: date)
+        let timestamp = date.formatted(timestampStyle)
         let day = String(timestamp.prefix(8))
         let contentHash = hex(SHA256.hash(data: payload))
         let scope = "\(day)/cn-north-1/translate/request"
@@ -183,6 +187,12 @@ enum Volcengine {
     }
 
     private static func hex(_ bytes: some Sequence<UInt8>) -> String {
-        bytes.map { String(format: "%02x", $0) }.joined()
+        var utf8: [UInt8] = []
+        utf8.reserveCapacity(64)
+        for byte in bytes {
+            utf8.append(hexDigits[Int(byte >> 4)])
+            utf8.append(hexDigits[Int(byte & 0x0f)])
+        }
+        return String(decoding: utf8, as: UTF8.self)
     }
 }
