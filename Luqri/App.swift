@@ -36,7 +36,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let overlay = SelectionOverlay()
     private var statusItem: NSStatusItem?
     private var shortcuts: GlobalShortcuts?
-    private var failedShortcuts = Set<Command>()
+    private var settingsKeyMonitor: Any?
     private var translationPanel: UtilityPanel?
     private var settingsWindow: NSWindow?
     private var feedbackPanel: NSPanel?
@@ -45,14 +45,28 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var ocrProgress: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let shortcuts = GlobalShortcuts { [weak self] command in self?.perform(command) }
-        failedShortcuts = shortcuts.install()
+        let shortcuts = GlobalShortcuts(
+            action: { [weak self] command in self?.perform(command) },
+            onChange: { [weak self] in self?.refreshMenuShortcuts() }
+        )
         self.shortcuts = shortcuts
+        shortcuts.install()
+        buildApplicationMenu()
         buildMenu()
+        settingsKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.shortcuts?.recording == nil, Shortcut.isSettingsEvent(event) else { return event }
+            if !event.isARepeat { self.showSettings() }
+            return nil
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         shortcuts?.uninstall()
+        if let settingsKeyMonitor { NSEvent.removeMonitor(settingsKeyMonitor) }
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        shortcuts?.cancelRecording()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -68,17 +82,52 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if command == .clipboardTranslate { menu.addItem(.separator()) }
             addItem(command.title, icon: command.icon, action: #selector(runCommand(_:)), to: menu) { entry in
                 entry.tag = Int(command.rawValue)
-                if !failedShortcuts.contains(command) {
-                    entry.keyEquivalent = command.key
-                    entry.keyEquivalentModifierMask = [.option, .shift]
-                }
             }
         }
         menu.addItem(.separator())
-        addItem("设置…", icon: "settings-2", action: #selector(showSettings), to: menu)
+        addItem("设置…", icon: "settings-2", action: #selector(showSettings), to: menu) { item in
+            item.keyEquivalent = ","
+            item.keyEquivalentModifierMask = .command
+        }
         addItem("退出 Luqri", icon: "log-out", action: #selector(quit), to: menu)
         item.menu = menu
         statusItem = item
+        refreshMenuShortcuts()
+    }
+
+    private func refreshMenuShortcuts() {
+        guard let shortcuts, let menu = statusItem?.menu else { return }
+        for item in menu.items {
+            guard let command = Command(rawValue: UInt32(item.tag)) else { continue }
+            let binding = shortcuts.binding(for: command)
+            item.keyEquivalent = shortcuts.failed.contains(command) ? "" : binding.key
+            item.keyEquivalentModifierMask = binding.modifierFlags
+        }
+    }
+
+    private func buildApplicationMenu() {
+        let menu = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu(title: "Luqri")
+        let settings = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        settings.target = self
+        appMenu.addItem(settings)
+        appItem.submenu = appMenu
+        menu.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        menu.addItem(editItem)
+        NSApp.mainMenu = menu
     }
 
     private func addItem(
@@ -262,26 +311,36 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func showSettings() {
+        guard let shortcuts else { return }
+        let pointer = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) ?? NSScreen.main
+        let window: NSWindow
         if let settingsWindow {
-            NSApp.activate()
-            settingsWindow.makeKeyAndOrderFront(nil)
-            return
+            window = settingsWindow
+        } else {
+            let content = SettingsView(model: model, shortcuts: shortcuts)
+            window = NSWindow(contentViewController: NSHostingController(rootView: content))
+            window.styleMask = [.titled, .closable]
+            window.title = "Luqri 设置"
+            window.level = .floating
+            window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            settingsWindow = window
         }
-        let content = SettingsView(model: model, failedShortcuts: failedShortcuts)
-        let window = NSWindow(contentViewController: NSHostingController(rootView: content))
-        window.styleMask = [.titled, .closable]
-        window.title = "Luqri 设置"
-        window.level = .floating
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        window.center()
-        settingsWindow = window
+        if let visible = screen?.visibleFrame {
+            let size = window.frame.size
+            window.setFrameOrigin(CGPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2))
+        } else {
+            window.center()
+        }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
         if (notification.object as? NSWindow) === settingsWindow {
+            shortcuts?.cancelRecording()
             settingsWindow = nil
         }
     }

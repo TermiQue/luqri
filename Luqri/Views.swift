@@ -238,7 +238,7 @@ struct TranslationView: View {
                 .font(.system(size: 13))
             if issue == .selection {
                 if showingHelp {
-                    Text("检查 Luqri 的辅助功能权限，或先复制文字再按 ⌥⇧V 翻译。")
+                    Text("检查 Luqri 的辅助功能权限，或先复制文字，再使用「翻译剪贴板」。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -376,7 +376,7 @@ struct TranslationView: View {
 
 struct SettingsView: View {
     @Bindable var model: TranslationModel
-    let failedShortcuts: Set<Command>
+    let shortcuts: GlobalShortcuts
     @State private var accessKey = ""
     @State private var secretKey = ""
     @State private var status = ""
@@ -392,10 +392,10 @@ struct SettingsView: View {
             }
 
             Section("火山引擎") {
-                TextField("Access Key ID", text: $accessKey)
-                SecureField("Secret Access Key", text: $secretKey)
+                credentialField("Access Key ID", text: $accessKey)
+                credentialField("Secret Access Key", text: $secretKey)
                 HStack {
-                    Text(status.isEmpty ? "密钥保存在 macOS 钥匙串" : status)
+                    Text(status.isEmpty ? "密钥仅保存在本机" : status)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -403,7 +403,8 @@ struct SettingsView: View {
                         Button("移除密钥", role: .destructive, action: removeCredentials)
                     }
                     Button("保存密钥", action: saveCredentials)
-                        .disabled(accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  || secretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Link("开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!)
             }
@@ -411,9 +412,22 @@ struct SettingsView: View {
             Section("快捷键") {
                 ForEach(Command.allCases, id: \.self) { command in
                     LabeledContent(command.title) {
-                        Text(command.shortcut + (failedShortcuts.contains(command) ? " · 注册失败" : ""))
-                            .monospaced()
+                        if shortcuts.failed.contains(command) {
+                            Text("不可用").foregroundStyle(.secondary)
+                        }
+                        Button(shortcuts.recording == command ? "请按键…" : shortcuts.binding(for: command).label) {
+                            shortcuts.beginRecording(command, in: NSApp.keyWindow)
+                        }
+                        .monospaced()
+                        .accessibilityHint("点击录制快捷键，按 Esc 取消")
                     }
+                }
+                HStack {
+                    Text(shortcuts.message ?? (shortcuts.recording == nil ? "点击快捷键按钮修改" : "按 Esc 取消录制"))
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                    Spacer()
+                    Button("恢复默认") { shortcuts.restoreDefaults() }
                 }
             }
 
@@ -433,28 +447,39 @@ struct SettingsView: View {
                 let credentials = try CloudCredentials.load()
                 hasCredentials = credentials != nil
                 accessKey = credentials?.accessKey ?? ""
+                secretKey = credentials?.secretKey ?? ""
             } catch {
                 status = error.localizedDescription
             }
         }
     }
 
+    private func credentialField(_ title: String, text: Binding<String>) -> some View {
+        HStack {
+            TextField(title, text: text)
+            Button {
+                Clipboard.write(text.wrappedValue)
+                status = "已复制 \(title)。"
+            } label: {
+                LucideIcon(name: "copy", size: 13)
+            }
+            .buttonStyle(.borderless)
+            .help("复制 \(title)")
+            .accessibilityLabel("复制 \(title)")
+            .disabled(text.wrappedValue.isEmpty)
+        }
+    }
+
     private func saveCredentials() {
         let access = accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let secret = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !access.isEmpty, !secret.isEmpty else { return }
         do {
-            guard !secret.isEmpty else {
-                if let existing = try CloudCredentials.load(), existing.accessKey == access {
-                    status = "密钥已保存。"
-                } else {
-                    status = "请输入 Secret Access Key。"
-                }
-                return
-            }
             try CloudCredentials(accessKey: access, secretKey: secret).save()
-            secretKey = ""
+            accessKey = access
+            secretKey = secret
             hasCredentials = true
-            status = "密钥已保存。"
+            status = "密钥已保存在本机。"
         } catch {
             status = error.localizedDescription
         }

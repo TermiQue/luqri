@@ -1,8 +1,9 @@
 import AppKit
 import Carbon
+import Observation
 import ApplicationServices
 
-enum Command: UInt32, CaseIterable {
+enum Command: UInt32, CaseIterable, Codable {
     case translate = 1
     case recognize
     case screenshotTranslate
@@ -49,21 +50,121 @@ enum Command: UInt32, CaseIterable {
         }
     }
 
-    var shortcut: String { "⌥⇧" + key.uppercased() }
+    var defaultShortcut: Shortcut {
+        Shortcut(keyCode: keyCode, modifiers: UInt32(optionKey | shiftKey), key: key)
+    }
+}
+
+struct Shortcut: Codable, Equatable {
+    let keyCode: UInt32
+    let modifiers: UInt32
+    let key: String
+
+    init(keyCode: UInt32, modifiers: UInt32, key: String) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+        self.key = key
+    }
+
+    init?(event: NSEvent) {
+        let flags = event.modifierFlags
+        let unshifted = flags.contains(.shift) ? event.characters(byApplyingModifiers: []) : nil
+        let characters = Self.isSettingsEvent(event) ? "," : unshifted ?? event.charactersIgnoringModifiers
+        guard let key = characters?.lowercased(), key.count == 1, event.keyCode != kVK_Escape else { return nil }
+        var modifiers = UInt32(0)
+        if flags.contains(.control) { modifiers |= UInt32(controlKey) }
+        if flags.contains(.option) { modifiers |= UInt32(optionKey) }
+        if flags.contains(.shift) { modifiers |= UInt32(shiftKey) }
+        if flags.contains(.command) { modifiers |= UInt32(cmdKey) }
+        self.init(keyCode: UInt32(event.keyCode), modifiers: modifiers, key: key)
+        guard modifiers & UInt32(controlKey | optionKey | cmdKey) != 0 else { return nil }
+    }
+
+    static func isSettingsEvent(_ event: NSEvent) -> Bool {
+        [",", "，"].contains(event.charactersIgnoringModifiers ?? "")
+            && event.modifierFlags.intersection([.control, .option, .shift, .command]) == .command
+    }
+
+    var isSettingsShortcut: Bool { key == "," && modifiers == UInt32(cmdKey) }
+
+    func usesSameKeys(as other: Self) -> Bool {
+        keyCode == other.keyCode && modifiers == other.modifiers
+    }
+
+    var modifierFlags: NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        if modifiers & UInt32(controlKey) != 0 { flags.insert(.control) }
+        if modifiers & UInt32(optionKey) != 0 { flags.insert(.option) }
+        if modifiers & UInt32(shiftKey) != 0 { flags.insert(.shift) }
+        if modifiers & UInt32(cmdKey) != 0 { flags.insert(.command) }
+        return flags
+    }
+
+    var label: String {
+        let flags = modifierFlags
+        var prefix = ""
+        if flags.contains(.control) { prefix += "⌃" }
+        if flags.contains(.option) { prefix += "⌥" }
+        if flags.contains(.shift) { prefix += "⇧" }
+        if flags.contains(.command) { prefix += "⌘" }
+        return prefix + keyLabel
+    }
+
+    private var keyLabel: String {
+        switch key {
+        case " ": return "空格"
+        case "\t": return "⇥"
+        case "\r", "\u{3}": return "↩"
+        case "\u{7f}": return "⌫"
+        case "\u{f700}": return "↑"
+        case "\u{f701}": return "↓"
+        case "\u{f702}": return "←"
+        case "\u{f703}": return "→"
+        default:
+            if let value = key.unicodeScalars.first?.value, (0xF704...0xF726).contains(value) {
+                return "F\(value - 0xF703)"
+            }
+            return key.uppercased()
+        }
+    }
 }
 
 @MainActor
+@Observable
 final class GlobalShortcuts {
     private static let signature: OSType = 0x4C555152
-    private var handler: EventHandlerRef?
-    private var references: [EventHotKeyRef] = []
-    private let action: (Command) -> Void
+    private static let preferencesKey = "globalShortcuts"
+    private static let defaultBindings = Dictionary(uniqueKeysWithValues: Command.allCases.map { ($0, $0.defaultShortcut) })
 
-    init(action: @escaping (Command) -> Void) {
+    private let defaults: UserDefaults
+    private let action: (Command) -> Void
+    private let onChange: () -> Void
+    @ObservationIgnored private var handler: EventHandlerRef?
+    @ObservationIgnored private var references: [EventHotKeyRef] = []
+    @ObservationIgnored private var recorder: Any?
+    private var bindings: [Command: Shortcut]
+    private(set) var failed = Set<Command>()
+    private(set) var recording: Command?
+    private(set) var message: String?
+
+    init(defaults: UserDefaults = .standard, action: @escaping (Command) -> Void, onChange: @escaping () -> Void = {}) {
+        self.defaults = defaults
         self.action = action
+        self.onChange = onChange
+        if let data = defaults.data(forKey: Self.preferencesKey),
+           let stored = try? JSONDecoder().decode([Command: Shortcut].self, from: data) {
+            bindings = Self.defaultBindings.merging(stored) { _, new in new }
+        } else {
+            bindings = Self.defaultBindings
+        }
     }
 
-    func install() -> Set<Command> {
+    func binding(for command: Command) -> Shortcut {
+        bindings[command] ?? command.defaultShortcut
+    }
+
+    func install() {
+        guard handler == nil else { return }
         var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
@@ -79,36 +180,124 @@ final class GlobalShortcuts {
                 }
                 return MainActor.assumeIsolated {
                     guard identifier.signature == GlobalShortcuts.signature else { return OSStatus(eventNotHandledErr) }
-                    Unmanaged<GlobalShortcuts>.fromOpaque(context).takeUnretainedValue().action(command)
+                    let shortcuts = Unmanaged<GlobalShortcuts>.fromOpaque(context).takeUnretainedValue()
+                    if shortcuts.recording == nil { shortcuts.action(command) }
                     return noErr
                 }
             },
             1, &type, Unmanaged.passUnretained(self).toOpaque(), &handler
         )
-        guard status == noErr else { return Set(Command.allCases) }
+        failed = status == noErr ? register(bindings) : Set(Command.allCases)
+    }
 
+    func beginRecording(_ command: Command, in window: NSWindow?) {
+        guard let window else { return }
+        if recording == command {
+            cancelRecording()
+            return
+        }
+        stopRecording()
+        unregister()
+        recording = command
+        message = nil
+        recorder = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
+            guard let self, let window, event.window === window else { return event }
+            if event.isARepeat { return nil }
+            if event.keyCode == kVK_Escape {
+                self.cancelRecording()
+            } else if let shortcut = Shortcut(event: event) {
+                self.assign(shortcut, to: command)
+            } else {
+                self.message = "请按住 ⌘、⌥ 或 ⌃，再按一个键。"
+            }
+            return nil
+        }
+        if recorder == nil {
+            cancelRecording()
+            message = "无法录制快捷键，请重试。"
+        }
+    }
+
+    func cancelRecording() {
+        guard recording != nil else { return }
+        stopRecording()
+        failed = register(bindings)
+        message = nil
+        onChange()
+    }
+
+    func assign(_ shortcut: Shortcut, to command: Command) {
+        if shortcut.isSettingsShortcut {
+            message = "⌘, 已用于打开设置，请选用其他组合。"
+            return
+        }
+        if shortcut.modifierFlags == .command && ["a", "c", "v", "x", "z", "\r"].contains(shortcut.key) {
+            message = "该组合用于应用内操作，请选用其他组合。"
+            return
+        }
+        if let other = Command.allCases.first(where: { $0 != command && binding(for: $0).usesSameKeys(as: shortcut) }) {
+            message = "该组合已用于「\(other.title)」。"
+            return
+        }
+        var updated = bindings
+        updated[command] = shortcut
+        apply(updated, checking: [command])
+    }
+
+    func restoreDefaults() {
+        apply(Self.defaultBindings, checking: Set(Command.allCases))
+    }
+
+    func uninstall() {
+        stopRecording()
+        unregister()
+        if let handler { RemoveEventHandler(handler) }
+        handler = nil
+    }
+
+    private func apply(_ updated: [Command: Shortcut], checking required: Set<Command>) {
+        stopRecording()
+        unregister()
+        let conflicts = register(updated)
+        if let conflict = Command.allCases.first(where: { conflicts.contains($0) && (required.contains($0) || !failed.contains($0)) }) {
+            unregister()
+            failed = register(bindings)
+            message = "「\(conflict.title)」的快捷键不可用，已保留原设置。"
+        } else {
+            bindings = updated
+            failed = conflicts
+            if let data = try? JSONEncoder().encode(updated) {
+                defaults.set(data, forKey: Self.preferencesKey)
+            }
+            message = nil
+        }
+        onChange()
+    }
+
+    private func register(_ bindings: [Command: Shortcut]) -> Set<Command> {
+        guard handler != nil else { return Set(Command.allCases) }
         var failed = Set<Command>()
         for command in Command.allCases {
+            let shortcut = bindings[command] ?? command.defaultShortcut
             var reference: EventHotKeyRef?
             let id = EventHotKeyID(signature: Self.signature, id: command.rawValue)
-            let result = RegisterEventHotKey(
-                command.keyCode, UInt32(optionKey | shiftKey), id,
-                GetApplicationEventTarget(), 0, &reference
-            )
-            if result == noErr, let reference {
-                references.append(reference)
-            } else {
-                failed.insert(command)
-            }
+            let result = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, id,
+                                             GetApplicationEventTarget(), UInt32(kEventHotKeyExclusive), &reference)
+            if result == noErr, let reference { references.append(reference) }
+            else { failed.insert(command) }
         }
         return failed
     }
 
-    func uninstall() {
+    private func unregister() {
         for reference in references { UnregisterEventHotKey(reference) }
-        if let handler { RemoveEventHandler(handler) }
         references.removeAll()
-        handler = nil
+    }
+
+    private func stopRecording() {
+        if let recorder { NSEvent.removeMonitor(recorder) }
+        recorder = nil
+        recording = nil
     }
 }
 

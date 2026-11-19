@@ -1,56 +1,44 @@
 import CryptoKit
 import Foundation
-import Security
 
 struct CloudCredentials: Codable, Sendable {
     let accessKey: String
     let secretKey: String
 
-    private static let keychainItem = [
-        kSecClass as String: kSecClassGenericPassword as String,
-        kSecAttrService as String: "com.termique.luqri",
-        kSecAttrAccount as String: "volcengine.translate"
-    ]
+    static let file = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Luqri/volcengine.json")
 
-    static func load() throws -> Self? {
-        var item: [String: Any] = keychainItem
-        item[kSecReturnData as String] = true as NSNumber
-        item[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(item as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        try checkKeychain(status)
-        guard let data = result as? Data else { throw VolcengineError.keychain(errSecDecode) }
-        return try JSONDecoder().decode(Self.self, from: data)
-    }
-
-    func save() throws {
-        let data = try JSONEncoder().encode(self)
-        let values = [kSecValueData as String: data]
-        let item = Self.keychainItem
-        let status = SecItemUpdate(item as CFDictionary, values as CFDictionary)
-        if status == errSecItemNotFound {
-            var newItem: [String: Any] = item
-            newItem[kSecValueData as String] = data
-            try Self.checkKeychain(SecItemAdd(newItem as CFDictionary, nil))
-        } else {
-            try Self.checkKeychain(status)
+    static func load(from url: URL = file) throws -> Self? {
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(Self.self, from: data)
+        } catch CocoaError.fileReadNoSuchFile {
+            return nil
         }
     }
 
-    static func remove() throws {
-        let status = SecItemDelete(keychainItem as CFDictionary)
-        if status != errSecItemNotFound { try checkKeychain(status) }
+    func save(to url: URL = Self.file) throws {
+        let data = try JSONEncoder().encode(self)
+        let manager = FileManager.default
+        let directory = url.deletingLastPathComponent()
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true,
+                                    attributes: [.posixPermissions: 0o700])
+        try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        try data.write(to: url, options: .atomic)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
-    private static func checkKeychain(_ status: OSStatus) throws {
-        guard status == errSecSuccess else { throw VolcengineError.keychain(status) }
+    static func remove(from url: URL = file) throws {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch CocoaError.fileNoSuchFile {
+            return
+        }
     }
 }
 
 enum VolcengineError: LocalizedError {
     case missingCredentials
-    case keychain(OSStatus)
     case response(Int)
     case service(String, String)
     case emptyResult
@@ -58,7 +46,6 @@ enum VolcengineError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingCredentials: "请在设置中填写火山引擎访问密钥。"
-        case .keychain(let status): "无法访问钥匙串（\(status)）。"
         case .response(let status): "火山引擎请求失败（HTTP \(status)）。"
         case .service(let code, let message): "火山引擎返回 \(code) · \(message)"
         case .emptyResult: "火山引擎未返回译文。"
