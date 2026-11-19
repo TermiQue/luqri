@@ -313,43 +313,35 @@ final class GlobalShortcuts {
 }
 
 enum SelectedText {
-    enum Lookup: Sendable {
-        case text(String), tryCopy, unavailable
-    }
-
-    static func read(from pid: pid_t) -> Lookup {
-        guard AXIsProcessTrusted() else { return .unavailable }
+    static func read(from pid: pid_t) -> String? {
+        guard AXIsProcessTrusted() else { return nil }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.18)
-        guard let focused = element(app, kAXFocusedUIElementAttribute) else { return .tryCopy }
+        guard let focused = element(app, kAXFocusedUIElementAttribute) else { return nil }
 
         var current = focused
-        var hasEmptyRange = false
-        for depth in 0..<4 {
+        for _ in 0..<4 {
             if let subrole = attribute(current, kAXSubroleAttribute) as? String,
-               subrole == kAXSecureTextFieldSubrole { return .unavailable }
+               subrole == kAXSecureTextFieldSubrole { return nil }
             if let text = attribute(current, kAXSelectedTextAttribute) as? String,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .text(text) }
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
 
             if let range = attribute(current, kAXSelectedTextRangeAttribute),
                CFGetTypeID(range) == AXValueGetTypeID() {
                 var selection = CFRange()
-                if AXValueGetValue(range as! AXValue, .cfRange, &selection), selection.length == 0, depth == 0 {
-                    hasEmptyRange = true
-                }
-                if selection.length > 0 {
+                if AXValueGetValue(range as! AXValue, .cfRange, &selection), selection.length > 0 {
                     var value: CFTypeRef?
                     let status = AXUIElementCopyParameterizedAttributeValue(
                         current, kAXStringForRangeParameterizedAttribute as CFString, range, &value
                     )
                     if status == .success, let text = value as? String,
-                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .text(text) }
+                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
                 }
             }
             guard let parent = element(current, kAXParentAttribute) else { break }
             current = parent
         }
-        return hasEmptyRange ? .unavailable : .tryCopy
+        return nil
     }
 
     private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -366,8 +358,6 @@ enum SelectedText {
 
 @MainActor
 enum Clipboard {
-    private static var selectionCopy: Task<String?, Never>?
-
     static var text: String { NSPasteboard.general.string(forType: .string) ?? "" }
 
     static func credentialText(from pasteboard: NSPasteboard = .general) -> String? {
@@ -381,86 +371,9 @@ enum Clipboard {
         return true
     }
 
-    static func textAfterSelectionCopy() async -> String {
-        _ = await selectionCopy?.value
-        return text
-    }
-
-    static func copySelection(from pid: pid_t) async -> String? {
-        while let selectionCopy { _ = await selectionCopy.value }
-        guard !Task.isCancelled, AXIsProcessTrusted(), !IsSecureEventInputEnabled(),
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-              let down = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: true),
-              let up = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: false) else { return nil }
-
-        let pasteboard = NSPasteboard.general
-        guard let snapshot = PasteboardSnapshot(pasteboard) else { return nil }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        let copy = Task<String?, Never> {
-            defer { selectionCopy = nil }
-            guard pasteboard.changeCount == snapshot.changeCount,
-                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return nil }
-            down.postToPid(pid)
-            up.postToPid(pid)
-            let deadline = ContinuousClock.now + .milliseconds(240)
-            while ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(15))
-                let count = pasteboard.changeCount
-                guard count != snapshot.changeCount else { continue }
-                guard count == snapshot.changeCount + 1,
-                      NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return nil }
-                let copied = pasteboard.string(forType: .string)
-                guard pasteboard.changeCount == count else { return nil }
-                snapshot.restore(to: pasteboard, replacing: count)
-                guard let copied, !copied.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-                return copied
-            }
-            return nil
-        }
-        selectionCopy = copy
-        return await copy.value
-    }
-
     static func write(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-    }
-}
-
-@MainActor
-struct PasteboardSnapshot {
-    let changeCount: Int
-    private let items: [NSPasteboardItem]
-
-    init?(_ pasteboard: NSPasteboard) {
-        changeCount = pasteboard.changeCount
-        var bytes = 0
-        var copies: [NSPasteboardItem] = []
-        let transientTypes: Set<NSPasteboard.PasteboardType> = [
-            .init("org.nspasteboard.ConcealedType"), .init("org.nspasteboard.TransientType"),
-            .init("org.nspasteboard.AutoGeneratedType"), .init("com.apple.pasteboard.promised-file-url"),
-            .init("com.apple.pasteboard.promised-file-content-type")
-        ]
-        for original in pasteboard.pasteboardItems ?? [] {
-            let types = original.types
-            guard !types.isEmpty, transientTypes.isDisjoint(with: types) else { return nil }
-            let copy = NSPasteboardItem()
-            for type in types {
-                guard let data = original.data(forType: type), data.count <= 8 * 1024 * 1024 - bytes,
-                      copy.setData(data, forType: type) else { return nil }
-                bytes += data.count
-            }
-            copies.append(copy)
-        }
-        guard pasteboard.changeCount == changeCount else { return nil }
-        items = copies
-    }
-
-    func restore(to pasteboard: NSPasteboard, replacing count: Int) {
-        guard pasteboard.changeCount == count else { return }
-        pasteboard.clearContents()
-        if !items.isEmpty { pasteboard.writeObjects(items) }
     }
 }

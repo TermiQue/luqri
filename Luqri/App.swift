@@ -33,7 +33,7 @@ enum Permissions {
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let model = TranslationModel()
-    private let overlay = SelectionOverlay()
+    private let screenshotCapture = ScreenshotCapture()
     private var statusItem: NSStatusItem?
     private var shortcuts: GlobalShortcuts?
     private var applicationKeyMonitor: Any?
@@ -170,95 +170,85 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         switch command {
         case .translate:
             translateSelection()
-        case .recognize, .screenshotTranslate:
-            startOCR(translate: command == .screenshotTranslate)
-        case .clipboardTranslate:
-            let anchor = NSEvent.mouseLocation
-            work = Task { [weak self] in
-                let text = await Clipboard.textAfterSelectionCopy()
-                guard let self, !Task.isCancelled else { return }
-                self.work = nil
-                self.showTranslation(text, at: anchor, missingInput: .clipboard)
+        case .recognize:
+            recognizeScreenshot { [weak self] text, anchor in
+                Clipboard.write(text)
+                self?.showFeedback("已复制识别文字", icon: "check", at: anchor)
             }
+        case .screenshotTranslate:
+            recognizeScreenshot { [weak self] text, anchor in
+                self?.showTranslation(text, at: anchor)
+            }
+        case .clipboardTranslate:
+            showTranslation(Clipboard.text, showEmptyClipboardHint: true)
         case .inputTranslate:
-            showTranslation("", at: NSEvent.mouseLocation)
+            showTranslation()
         }
     }
 
     private func cancelWork() {
         work?.cancel()
         work = nil
+        screenshotCapture.cancelSelection()
         stopOCRProgress()
-        overlay.cancel()
         clearFeedback()
     }
 
     private func translateSelection() {
-        let mouse = NSEvent.mouseLocation
-        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let anchor = NSEvent.mouseLocation
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              pid != ProcessInfo.processInfo.processIdentifier else {
+            showTranslation(at: anchor)
+            return
+        }
         work = Task { [weak self] in
-            var selection = ""
-            if let pid, pid != ProcessInfo.processInfo.processIdentifier {
-                let lookup = await Task.detached(priority: .userInitiated) { SelectedText.read(from: pid) }.value
-                guard !Task.isCancelled else { return }
-                switch lookup {
-                case .text(let text): selection = text
-                case .tryCopy: selection = await Clipboard.copySelection(from: pid) ?? ""
-                case .unavailable: break
-                }
-                guard !Task.isCancelled, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
-            }
+            let text = await Task.detached(priority: .userInitiated) { SelectedText.read(from: pid) }.value
             guard let self, !Task.isCancelled else { return }
             self.work = nil
-            self.showTranslation(selection, at: mouse, missingInput: .selection)
+            let selection = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid ? text : nil
+            self.showTranslation(selection, at: anchor)
         }
     }
 
-    private func startOCR(translate: Bool) {
-        let previousApp = NSWorkspace.shared.frontmostApplication
+    private func recognizeScreenshot(deliver: @escaping (String, CGPoint) -> Void) {
         closeTranslation()
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
-            let alert = NSAlert()
-            alert.messageText = "允许 Luqri 录制屏幕"
-            alert.informativeText = "在系统设置中为 Luqri 启用屏幕录制权限，再重试截图。"
-            alert.addButton(withTitle: "打开系统设置")
-            alert.addButton(withTitle: "稍后")
-            NSApp.activate()
-            if alert.runModal() == .alertFirstButtonReturn { Permissions.openScreenCapture() }
-            return
-        }
-        overlay.begin { [weak self] selection in
+        work = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            if let previousApp, previousApp.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-                previousApp.activate()
-            }
-            guard let selection else { return }
-            self.ocrProgress = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(250))
-                guard let self, !Task.isCancelled else { return }
-                self.showFeedback("正在识别文字…", icon: "scan-text", at: selection.anchor, autoHide: false)
-            }
-            self.work = Task(priority: .userInitiated) { [weak self] in
-                do {
-                    let text = try await ScreenOCR.recognize(selection)
+            var anchor = NSEvent.mouseLocation
+            defer { if !Task.isCancelled { self.work = nil } }
+            do {
+                guard let screenshot = try await self.screenshotCapture.capture() else { return }
+                try Task.checkCancellation()
+                let recognitionAnchor = screenshot.anchor
+                anchor = recognitionAnchor
+                self.ocrProgress = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(250))
                     guard let self, !Task.isCancelled else { return }
-                    self.work = nil
-                    self.stopOCRProgress()
-                    if translate {
-                        self.showTranslation(text, at: selection.anchor)
-                    } else {
-                        Clipboard.write(text)
-                        self.showFeedback("已复制识别文字", icon: "check", at: selection.anchor)
-                    }
-                } catch {
-                    guard let self, !Task.isCancelled else { return }
-                    self.work = nil
-                    self.stopOCRProgress()
-                    let message = (error as? ScreenOCR.Failure)?.errorDescription ?? "截图或识别失败，请重新框选。"
-                    self.showFeedback(message, icon: "x", at: selection.anchor)
+                    self.showFeedback("正在识别文字…", icon: "scan-text", at: recognitionAnchor, autoHide: false)
                 }
+                let text = try await ScreenOCR.recognize(screenshot.image)
+                try Task.checkCancellation()
+                self.stopOCRProgress()
+                deliver(text, anchor)
+            } catch ScreenshotCapture.Failure.permissionDenied {
+                if !Task.isCancelled { self.showScreenRecordingPermission() }
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.stopOCRProgress()
+                let message = (error as? LocalizedError)?.errorDescription ?? "截图或识别失败，请重新框选。"
+                self.showFeedback(message, icon: "x", at: anchor)
             }
         }
+    }
+
+    private func showScreenRecordingPermission() {
+        let alert = NSAlert()
+        alert.messageText = "允许 Luqri 录制屏幕"
+        alert.informativeText = "在系统设置中为 Luqri 启用屏幕录制权限，再重试截图。"
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "稍后")
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn { Permissions.openScreenCapture() }
     }
 
     private func stopOCRProgress() {
@@ -268,8 +258,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         clearFeedback()
     }
 
-    private func showTranslation(_ input: String, at anchor: CGPoint, missingInput: MissingInput? = nil) {
+    private func showTranslation(
+        _ input: String? = nil, at anchor: CGPoint = NSEvent.mouseLocation, showEmptyClipboardHint: Bool = false
+    ) {
         closeTranslation()
+        let input = input ?? ""
         let hasInput = !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let panel = UtilityPanel(contentRect: .zero, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
         panel.level = .floating
@@ -290,7 +283,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         }
         let view = TranslationView(
-            missingInput: hasInput ? nil : missingInput,
+            showEmptyClipboardHint: !hasInput && showEmptyClipboardHint,
             model: model, startsEditing: !hasInput,
             close: { [weak self] in self?.closeTranslation() },
             openSettings: { [weak self] in self?.showSettings() },

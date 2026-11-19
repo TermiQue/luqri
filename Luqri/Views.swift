@@ -56,26 +56,14 @@ final class UtilityPanel: NSPanel {
     }
 }
 
-enum MissingInput {
-    case selection, clipboard
-
-    var message: String {
-        switch self {
-        case .selection: "划词翻译没有获取到文字"
-        case .clipboard: "剪贴板中没有可翻译的文字"
-        }
-    }
-}
-
 struct TranslationView: View {
     @FocusState private var editorFocused: Bool
     @State private var pinned = false
     @State private var collapsedProviders = Set<Provider>()
-    @State private var showingHelp = false
     @State private var copiedSource = false
     @State private var copiedResult: Provider?
     @State private var speaker: AVSpeechSynthesizer?
-    @State var missingInput: MissingInput?
+    @State var showEmptyClipboardHint = false
 
     @Bindable var model: TranslationModel
     let startsEditing: Bool
@@ -97,8 +85,8 @@ struct TranslationView: View {
             header
             editor
             languages
-            if !hasText, let missingInput {
-                inputHint(missingInput)
+            if !hasText && showEmptyClipboardHint {
+                clipboardHint
             }
             if model.enabledProviders.isEmpty {
                 HStack {
@@ -125,7 +113,7 @@ struct TranslationView: View {
         .onDisappear { speaker?.stopSpeaking(at: .immediate) }
         .onChange(of: model.text) {
             copiedSource = false
-            if hasText { missingInput = nil }
+            if hasText { showEmptyClipboardHint = false }
             speaker?.stopSpeaking(at: .immediate)
         }
         .onChange(of: model.isTranslating) {
@@ -239,33 +227,12 @@ struct TranslationView: View {
         .accessibilityLabel(title)
     }
 
-    private func inputHint(_ issue: MissingInput) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label {
-                Text("提示").font(.caption.weight(.semibold))
-            } icon: {
-                LucideIcon(name: "lightbulb", size: 13)
-            }
-            .foregroundStyle(.secondary)
-            Text(issue.message)
+    private var clipboardHint: some View {
+        Label {
+            Text("剪贴板中没有可翻译的文字")
                 .font(.system(size: 13))
-            if issue == .selection {
-                if showingHelp {
-                    Text("检查 Luqri 的辅助功能权限，或先复制文字，再使用「翻译剪贴板」。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("打开辅助功能设置") { Permissions.openAccessibility() }
-                        .controlSize(.small)
-                } else {
-                    Button("如何解决") { showingHelp = true }
-                        .controlSize(.small)
-                }
-            } else {
-                Text("复制一段文字，或直接在上方输入。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        } icon: {
+            LucideIcon(name: "lightbulb", size: 13)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -369,7 +336,7 @@ struct TranslationView: View {
     private func pasteAndTranslate() {
         let input = Clipboard.text
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            if !hasText { missingInput = .clipboard }
+            if !hasText { showEmptyClipboardHint = true }
             editorFocused = true
             return
         }

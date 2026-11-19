@@ -9,6 +9,7 @@
 		1A2B3C4D00000000000000C8 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000064 /* App.swift */; };
 		1A2B3C4D00000000000000C9 /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000065 /* Input.swift */; };
 		1A2B3C4D00000000000000CA /* ScreenOCR.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000066 /* ScreenOCR.swift */; };
+		1A2B3C4D00000000000000D0 /* Screenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006D /* Screenshot.swift */; };
 		1A2B3C4D00000000000000CB /* TranslationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000067 /* TranslationModel.swift */; };
 		1A2B3C4D00000000000000CC /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000068 /* Views.swift */; };
 		1A2B3C4D00000000000000CD /* Volcengine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000069 /* Volcengine.swift */; };
@@ -20,6 +21,7 @@
 		1A2B3C4D0000000000000064 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App.swift"; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000065 /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Input.swift"; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000066 /* ScreenOCR.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ScreenOCR.swift"; sourceTree = "<group>"; };
+		1A2B3C4D000000000000006D /* Screenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Screenshot.swift"; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000067 /* TranslationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TranslationModel.swift"; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000068 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views.swift"; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000069 /* Volcengine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Volcengine.swift"; sourceTree = "<group>"; };
@@ -50,6 +52,7 @@
 				1A2B3C4D0000000000000064 /* App.swift */,
 				1A2B3C4D0000000000000065 /* Input.swift */,
 				1A2B3C4D0000000000000066 /* ScreenOCR.swift */,
+				1A2B3C4D000000000000006D /* Screenshot.swift */,
 				1A2B3C4D0000000000000067 /* TranslationModel.swift */,
 				1A2B3C4D0000000000000068 /* Views.swift */,
 				1A2B3C4D0000000000000069 /* Volcengine.swift */,
@@ -121,6 +124,7 @@
 				1A2B3C4D00000000000000C8 /* App.swift in Sources */,
 				1A2B3C4D00000000000000C9 /* Input.swift in Sources */,
 				1A2B3C4D00000000000000CA /* ScreenOCR.swift in Sources */,
+				1A2B3C4D00000000000000D0 /* Screenshot.swift in Sources */,
 				1A2B3C4D00000000000000CB /* TranslationModel.swift in Sources */,
 				1A2B3C4D00000000000000CC /* Views.swift in Sources */,
 				1A2B3C4D00000000000000CD /* Volcengine.swift in Sources */,
