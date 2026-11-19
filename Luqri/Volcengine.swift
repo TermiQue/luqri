@@ -53,10 +53,42 @@ enum VolcengineError: LocalizedError {
     }
 }
 
+struct VolcengineResponseMetadata: Decodable {
+    struct APIError: Decodable {
+        let Code: String
+        let Message: String
+    }
+
+    let Error: APIError?
+}
+
 enum Volcengine {
-    private static let host = "translate.volcengineapi.com"
-    private static let query = "Action=TranslateText&Version=2020-06-01"
-    private static let endpoint = URL(string: "https://\(host)/?\(query)")!
+    struct Operation: Sendable {
+        static let translation = Operation(
+            host: "translate.volcengineapi.com", query: "Action=TranslateText&Version=2020-06-01",
+            service: "translate", contentType: "application/json"
+        )
+        static let multilingualOCR = Operation(
+            host: "visual.volcengineapi.com", query: "Action=MultiLanguageOCR&Version=2022-08-31",
+            service: "cv", contentType: "application/x-www-form-urlencoded"
+        )
+
+        let host: String
+        let query: String
+        let service: String
+        let contentType: String
+        let endpoint: URL
+
+        private init(host: String, query: String, service: String, contentType: String) {
+            self.host = host
+            self.query = query
+            self.service = service
+            self.contentType = contentType
+            endpoint = URL(string: "https://\(host)/?\(query)")!
+        }
+    }
+
+    private static let region = "cn-north-1"
     private static let timestampStyle = Date.ISO8601FormatStyle(
         dateSeparator: .omitted, timeSeparator: .omitted, timeZoneSeparator: .omitted
     )
@@ -86,15 +118,7 @@ enum Volcengine {
             let DetectedSourceLanguage: String?
         }
 
-        struct Metadata: Decodable {
-            struct APIError: Decodable {
-                let Code: String
-                let Message: String
-            }
-            let Error: APIError?
-        }
-
-        let ResponseMetadata: Metadata?
+        let ResponseMetadata: VolcengineResponseMetadata?
         let TranslationList: [Translation]?
     }
 
@@ -114,8 +138,7 @@ enum Volcengine {
             let body = RequestBody(sourceLanguage: source, targetLanguage: job.target.cloudCode, text: [content])
             let payload = try JSONEncoder().encode(body)
             let request = signedRequest(payload: payload, credentials: credentials, date: Date())
-            let (data, response) = try await session.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let (data, status) = try await send(request)
             let result = try? JSONDecoder().decode(ResponseBody.self, from: data)
             if let error = result?.ResponseMetadata?.Error {
                 throw VolcengineError.service(error.Code, error.Message)
@@ -132,30 +155,38 @@ enum Volcengine {
         return translated
     }
 
-    static func signedRequest(payload: Data, credentials: CloudCredentials, date: Date) -> URLRequest {
+    static func send(_ request: URLRequest) async throws -> (Data, Int) {
+        let (data, response) = try await session.data(for: request)
+        return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+    }
+
+    static func signedRequest(
+        payload: Data, credentials: CloudCredentials, date: Date, operation: Operation = .translation
+    ) -> URLRequest {
         let timestamp = date.formatted(timestampStyle)
         let day = String(timestamp.prefix(8))
         let contentHash = hex(SHA256.hash(data: payload))
-        let scope = "\(day)/cn-north-1/translate/request"
+        let scopeParts = [day, region, operation.service, "request"]
+        let scope = scopeParts.joined(separator: "/")
         let headers = [
-            ("content-type", "application/json"),
-            ("host", host),
+            ("content-type", operation.contentType),
+            ("host", operation.host),
             ("x-content-sha256", contentHash),
             ("x-date", timestamp)
         ]
         let canonicalHeaders = headers.map { "\($0.0):\($0.1)\n" }.joined()
         let signedHeaders = headers.map(\.0).joined(separator: ";")
-        let canonicalRequest = ["POST", "/", query, canonicalHeaders, signedHeaders, contentHash].joined(separator: "\n")
+        let canonicalRequest = ["POST", "/", operation.query, canonicalHeaders, signedHeaders, contentHash].joined(separator: "\n")
         let requestHash = hex(SHA256.hash(data: Data(canonicalRequest.utf8)))
         let stringToSign = ["HMAC-SHA256", timestamp, scope, requestHash].joined(separator: "\n")
 
-        let signingKey = [day, "cn-north-1", "translate", "request"].reduce(Data(credentials.secretKey.utf8)) {
+        let signingKey = scopeParts.reduce(Data(credentials.secretKey.utf8)) {
             mac($1, key: $0)
         }
         let signature = hex(mac(stringToSign, key: signingKey))
         let authorization = "HMAC-SHA256 Credential=\(credentials.accessKey)/\(scope), SignedHeaders=\(signedHeaders), Signature=\(signature)"
 
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: operation.endpoint)
         request.httpMethod = "POST"
         request.httpBody = payload
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }

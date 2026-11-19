@@ -1,13 +1,38 @@
 import Foundation
 import Vision
 
-enum ScreenOCR {
-    enum Failure: LocalizedError {
-        case noText
+enum OCRProvider: String, CaseIterable, Identifiable {
+    case appleVision, volcengine
 
-        var errorDescription: String? { "选区中没有识别到文字。" }
+    static let preferenceKey = "ocrProvider"
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .appleVision: "Apple Vision（本机）"
+        case .volcengine: "火山引擎多语种 OCR"
+        }
     }
 
+    static func selected(in defaults: UserDefaults = .standard) -> Self {
+        Self(rawValue: defaults.string(forKey: preferenceKey) ?? "") ?? .appleVision
+    }
+
+    func recognize(_ image: CGImage) async throws -> String {
+        switch self {
+        case .appleVision: try await ScreenOCR.recognize(image)
+        case .volcengine: try await VolcengineOCR.recognize(image)
+        }
+    }
+}
+
+enum OCRFailure: LocalizedError {
+    case noText
+
+    var errorDescription: String? { "选区中没有识别到文字。" }
+}
+
+enum ScreenOCR {
     static func recognize(_ image: CGImage) async throws -> String {
         try Task.checkCancellation()
         let request = VNRecognizeTextRequest()
@@ -33,7 +58,7 @@ enum ScreenOCR {
             return OCRLine(text: text, bounds: VNImageRectForNormalizedRect(observation.boundingBox, image.width, image.height))
         } ?? []
         let text = OCRLine.paragraphs(from: lines)
-        guard !text.isEmpty else { throw Failure.noText }
+        guard !text.isEmpty else { throw OCRFailure.noText }
         return text
     }
 
@@ -44,7 +69,7 @@ enum ScreenOCR {
     }
 }
 
-private struct OCRLine {
+struct OCRLine {
     let text: String
     let bounds: CGRect
 

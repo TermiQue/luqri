@@ -213,6 +213,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func recognizeScreenshot(deliver: @escaping (String, CGPoint) -> Void) {
         closeTranslation()
+        let provider = OCRProvider.selected()
         work = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             var anchor = NSEvent.mouseLocation
@@ -227,7 +228,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     guard let self, !Task.isCancelled else { return }
                     self.showFeedback("正在识别文字…", icon: "scan-text", at: recognitionAnchor, autoHide: false)
                 }
-                let text = try await ScreenOCR.recognize(screenshot.image)
+                let text = try await provider.recognize(screenshot.image)
                 try Task.checkCancellation()
                 self.stopOCRProgress()
                 deliver(text, anchor)

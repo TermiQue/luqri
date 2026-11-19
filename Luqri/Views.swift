@@ -453,6 +453,7 @@ struct SettingsView: View {
 
     @Bindable var model: TranslationModel
     let shortcuts: GlobalShortcuts
+    @AppStorage(OCRProvider.preferenceKey) private var ocrProvider = OCRProvider.appleVision
     @State private var accessKey = ""
     @State private var secretKey = ""
     @State private var status = ""
@@ -478,6 +479,18 @@ struct SettingsView: View {
                         get: { model.enabledProviders.contains(provider) },
                         set: { model.setEnabled($0, for: provider) }
                     ))
+                }
+            }
+
+            Section("OCR 服务") {
+                Picker("识别服务", selection: $ocrProvider) {
+                    ForEach(OCRProvider.allCases) { Text($0.title).tag($0) }
+                }
+                if ocrProvider == .volcengine {
+                    Text("所选截图将发送至火山引擎，使用下方保存的密钥。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Link("多语种 OCR 开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1")!)
                 }
             }
 

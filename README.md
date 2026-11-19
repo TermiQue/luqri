@@ -42,8 +42,14 @@ open .build/Luqri.app
 
 - **Apple 翻译**默认启用，使用 macOS Translation 框架。首次翻译时，系统可能会请求下载语言包。语言包就绪后可离线翻译。
 - **火山引擎**需先开通机器翻译，再在 Luqri 的「设置」填写 Access Key ID 和 Secret Access Key，两个字段均可用 `⌘V` 或粘贴按钮填入。密钥存为本机的 `~/Library/Application Support/Luqri/volcengine.json`，文件权限为 `0600`。旧版保存在钥匙串中的密钥需要重新填写。火山引擎当前文本翻译每自然月前 200 万字符免费，超额按量计费。 [火山引擎计费文档](https://docs.volcengine.com/docs/machine-translation/product-billing)
-- OCR 使用 Apple Vision 在本机识别。选择火山引擎做 OCR 翻译时，应用发送识别后的文字，截图留在本机。
 - 默认自动选择译文语言。中文原文译为英语，其它语言译为简体中文。可在设置中指定译文语言，也可在浮窗中直接调整。原文语言在浮窗中选定。
+
+## OCR 服务
+
+在设置的「OCR 服务」中单选 Apple Vision 或火山引擎多语种 OCR。截图识别和截图翻译共用这项设置。
+
+- **Apple Vision** 默认在本机识别截图。
+- **火山引擎多语种 OCR** 需要开通对应服务，并使用设置里保存的火山引擎访问密钥。应用会将所选截图发送给火山引擎进行识别。 [接口说明](https://docs.volcengine.com/docs/large-model-of-image-generation/calling-method-1)
 
 ## 图标
 
