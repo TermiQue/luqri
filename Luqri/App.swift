@@ -326,9 +326,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let settingsWindow {
             window = settingsWindow
         } else {
-            let content = SettingsView(model: model, shortcuts: shortcuts)
-            window = NSWindow(contentViewController: NSHostingController(rootView: content))
-            window.styleMask = [.titled, .closable]
+            let controller = NSHostingController(rootView: SettingsView(model: model, shortcuts: shortcuts))
+            controller.sizingOptions = []
+            window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: SettingsView.preferredSize),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false
+            )
+            window.contentViewController = controller
             window.title = "Luqri 设置"
             window.level = .floating
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
@@ -336,14 +340,27 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.delegate = self
             settingsWindow = window
         }
-        if let visible = screen?.visibleFrame {
-            let size = window.frame.size
-            window.setFrameOrigin(CGPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2))
+        let frame = screen.map { settingsFrame(for: window, screen: $0.frame, visible: $0.visibleFrame) }
+        if let frame {
+            window.setFrame(frame, display: false)
         } else {
             window.center()
         }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        if let frame, window.frame != frame {
+            window.setFrame(frame, display: true)
+        }
+    }
+
+    private func settingsFrame(for window: NSWindow, screen: CGRect, visible: CGRect) -> CGRect {
+        let preferred = window.frameRect(forContentRect: CGRect(origin: .zero, size: SettingsView.preferredSize)).size
+        let size = CGSize(width: min(preferred.width, visible.width), height: min(preferred.height, visible.height))
+        return CGRect(
+            x: min(max((screen.midX - size.width / 2).rounded(), visible.minX), visible.maxX - size.width),
+            y: min(max((screen.midY - size.height / 2).rounded(), visible.minY), visible.maxY - size.height),
+            width: size.width, height: size.height
+        )
     }
 
     func windowWillClose(_ notification: Notification) {

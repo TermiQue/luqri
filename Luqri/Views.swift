@@ -375,6 +375,8 @@ struct TranslationView: View {
 }
 
 struct SettingsView: View {
+    static let preferredSize = CGSize(width: 466, height: 590)
+
     @Bindable var model: TranslationModel
     let shortcuts: GlobalShortcuts
     @State private var accessKey = ""
@@ -441,7 +443,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 466, height: 590)
         .onAppear {
             do {
                 let credentials = try CloudCredentials.load()
