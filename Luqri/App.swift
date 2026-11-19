@@ -54,18 +54,28 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         buildApplicationMenu()
         buildMenu()
         applicationKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.shortcuts?.recording == nil else { return event }
-            if Shortcut.isSettingsEvent(event) {
-                if !event.isARepeat { self.showSettings() }
+            guard let self else { return event }
+            return self.handleApplicationKey(event)
+        }
+    }
+
+    private func handleApplicationKey(_ event: NSEvent) -> NSEvent? {
+        guard shortcuts?.recording == nil else { return event }
+        if Shortcut.isSettingsEvent(event) {
+            if !event.isARepeat { showSettings() }
+            return nil
+        }
+        if let window = settingsWindow, (event.window ?? NSApp.keyWindow) === window {
+            if Shortcut.isEscapeEvent(event) {
+                if !event.isARepeat { window.performClose(nil) }
                 return nil
             }
-            if let window = self.settingsWindow, (event.window ?? NSApp.keyWindow) === window,
-               Shortcut.isPasteEvent(event), let editor = window.firstResponder as? NSTextView, editor.isEditable {
+            if Shortcut.isPasteEvent(event), let editor = window.firstResponder as? NSTextView, editor.isEditable {
                 if !event.isARepeat, !Clipboard.pasteCredential(into: editor) { NSSound.beep() }
                 return nil
             }
-            return event
         }
+        return event
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -274,7 +284,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.title = "Luqri 翻译"
         panel.onEscape = { [weak self] in self?.closeTranslation() }
         panel.onEditorReturn = { [weak model] in
-            guard let model, !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            guard let model, !model.enabledProviders.isEmpty,
+                  !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
             model.translate()
             return true
         }

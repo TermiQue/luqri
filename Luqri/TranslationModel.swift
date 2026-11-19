@@ -73,62 +73,89 @@ struct TranslationJob: Identifiable {
     }
 }
 
+enum TranslationOutput: Equatable {
+    case idle, translating, translated(String), failed(String)
+}
+
 @MainActor
 @Observable
 final class TranslationModel {
+    private let defaults: UserDefaults
+
     var text = ""
     var source: Language? {
-        didSet { if source != oldValue { changeOptions() } }
+        didSet { if source != oldValue { changeLanguages() } }
     }
     var target: Language? {
-        didSet { if target != oldValue { changeOptions() } }
-    }
-    var provider: Provider {
-        didSet { if provider != oldValue { changeOptions() } }
+        didSet { if target != oldValue { changeLanguages() } }
     }
 
-    private(set) var result = ""
-    private(set) var error: String?
-    private(set) var isTranslating = false
-    private(set) var appleJob: TranslationJob?
-    private var activeID: UUID?
+    private var selectedProviders: Set<Provider>
+    private var outputs: [Provider: TranslationOutput] = [:]
+    private var activeJobs: [Provider: TranslationJob] = [:]
     @ObservationIgnored private var cloudTask: Task<Void, Never>?
 
-    init() {
-        let defaults = UserDefaults.standard
-        provider = Provider(rawValue: defaults.string(forKey: "provider") ?? "") ?? .apple
+    var enabledProviders: [Provider] { Provider.allCases.filter(selectedProviders.contains) }
+    var isTranslating: Bool { !activeJobs.isEmpty }
+    var appleJob: TranslationJob? { activeJobs[.apple] }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if let enabled = defaults.stringArray(forKey: "enabledTranslationProviders") {
+            selectedProviders = Set(enabled.compactMap(Provider.init(rawValue:)))
+        } else {
+            selectedProviders = [Provider(rawValue: defaults.string(forKey: "provider") ?? "") ?? .apple]
+        }
         source = Language(rawValue: defaults.string(forKey: "sourceLanguage") ?? "")
         target = Language(rawValue: defaults.string(forKey: "targetLanguage") ?? "")
     }
 
+    func setEnabled(_ enabled: Bool, for provider: Provider) {
+        guard selectedProviders.contains(provider) != enabled else { return }
+        if enabled {
+            selectedProviders.insert(provider)
+        } else {
+            selectedProviders.remove(provider)
+            activeJobs[provider] = nil
+            outputs[provider] = nil
+            if provider == .volcengine {
+                cloudTask?.cancel()
+                cloudTask = nil
+            }
+        }
+        defaults.set(enabledProviders.map(\.rawValue), forKey: "enabledTranslationProviders")
+    }
+
+    func output(for provider: Provider) -> TranslationOutput {
+        outputs[provider] ?? .idle
+    }
+
     func begin(with input: String) {
-        clearResult()
         text = input
         translate()
     }
 
     func translate() {
-        clearResult()
+        clearResults()
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty else { return }
+        guard !input.isEmpty, !selectedProviders.isEmpty else { return }
         let destination = target ?? automaticTarget(for: input)
-        let job = TranslationJob(text: input, provider: provider, source: source, target: destination)
-        activeID = job.id
-        isTranslating = true
-
-        switch job.provider {
-        case .apple:
-            appleJob = job
-        case .volcengine:
-            cloudTask = Task { [weak self] in
-                do {
-                    guard let credentials = try CloudCredentials.load() else {
-                        throw VolcengineError.missingCredentials
+        for provider in enabledProviders {
+            let job = TranslationJob(text: input, provider: provider, source: source, target: destination)
+            activeJobs[provider] = job
+            outputs[provider] = .translating
+            if provider == .volcengine {
+                cloudTask = Task { [weak self] in
+                    do {
+                        try Task.checkCancellation()
+                        guard let credentials = try CloudCredentials.load() else {
+                            throw VolcengineError.missingCredentials
+                        }
+                        let translation = try await Volcengine.translate(job, credentials: credentials)
+                        self?.finish(job, with: .success(translation))
+                    } catch {
+                        self?.finish(job, with: .failure(error))
                     }
-                    let translation = try await Volcengine.translate(job, credentials: credentials)
-                    self?.finish(job, with: .success(translation))
-                } catch {
-                    self?.finish(job, with: .failure(error))
                 }
             }
         }
@@ -136,7 +163,7 @@ final class TranslationModel {
 
     nonisolated func appleAction(for job: TranslationJob) -> (TranslationSession) async -> Void {
         { session in
-            guard await self.activeID == job.id else { return }
+            guard await self.appleJob?.id == job.id, !Task.isCancelled else { return }
             do {
                 let response = try await session.translate(job.text)
                 await self.finish(job, with: .success(response.targetText))
@@ -148,12 +175,12 @@ final class TranslationModel {
 
     func edit(_ input: String) {
         guard text != input else { return }
-        clearResult()
+        clearResults()
         text = input
     }
 
     func reset() {
-        clearResult()
+        clearResults()
         text = ""
     }
 
@@ -168,49 +195,42 @@ final class TranslationModel {
         return .simplifiedChinese
     }
 
-    private func changeOptions() {
-        let defaults = UserDefaults.standard
-        defaults.set(provider.rawValue, forKey: "provider")
+    private func changeLanguages() {
         defaults.set(source?.rawValue, forKey: "sourceLanguage")
         defaults.set(target?.rawValue, forKey: "targetLanguage")
-        clearResult()
+        clearResults()
     }
 
-    private func clearResult() {
-        activeID = nil
+    private func clearResults() {
+        activeJobs.removeAll()
         cloudTask?.cancel()
         cloudTask = nil
-        appleJob = nil
-        isTranslating = false
-        result = ""
-        error = nil
+        outputs.removeAll()
     }
 
     private func finish(_ job: TranslationJob, with outcome: Result<String, any Error>) {
-        guard activeID == job.id else { return }
-        activeID = nil
-        cloudTask = nil
-        appleJob = nil
-        isTranslating = false
-
+        guard activeJobs[job.provider]?.id == job.id else { return }
+        activeJobs[job.provider] = nil
+        if job.provider == .volcengine { cloudTask = nil }
         switch outcome {
         case .success(let translation):
-            result = translation
-        case .failure(let failure):
-            if let translationError = failure as? TranslationError {
-                switch translationError {
-                case .nothingToTranslate, .unsupportedLanguagePairing:
-                    error = "当前语言组合无法翻译，请更换原文语言或译文语言。"
-                case .unsupportedSourceLanguage, .unsupportedTargetLanguage:
-                    error = "Apple 翻译不支持该语言，请更换语言。"
-                case .unableToIdentifyLanguage:
-                    error = "无法识别原文语言，请手动选择原文语言。"
-                default:
-                    error = "Apple 翻译未完成。请确认语言已下载，再试一次。"
-                }
-            } else {
-                error = failure.localizedDescription
-            }
+            outputs[job.provider] = .translated(translation)
+        case .failure(let error):
+            outputs[job.provider] = .failed(Self.message(for: error))
+        }
+    }
+
+    private static func message(for error: any Error) -> String {
+        guard let translationError = error as? TranslationError else { return error.localizedDescription }
+        switch translationError {
+        case .nothingToTranslate, .unsupportedLanguagePairing:
+            return "当前语言组合无法翻译，请更换原文语言或译文语言。"
+        case .unsupportedSourceLanguage, .unsupportedTargetLanguage:
+            return "Apple 翻译不支持该语言，请更换语言。"
+        case .unableToIdentifyLanguage:
+            return "无法识别原文语言，请手动选择原文语言。"
+        default:
+            return "Apple 翻译未完成。请确认语言已下载，再试一次。"
         }
     }
 }

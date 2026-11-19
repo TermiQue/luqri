@@ -70,10 +70,10 @@ enum MissingInput {
 struct TranslationView: View {
     @FocusState private var editorFocused: Bool
     @State private var pinned = false
-    @State private var collapsed = false
+    @State private var collapsedProviders = Set<Provider>()
     @State private var showingHelp = false
     @State private var copiedSource = false
-    @State private var copiedResult = false
+    @State private var copiedResult: Provider?
     @State private var speaker: AVSpeechSynthesizer?
     @State var missingInput: MissingInput?
 
@@ -100,8 +100,20 @@ struct TranslationView: View {
             if !hasText, let missingInput {
                 inputHint(missingInput)
             }
-            ForEach(Provider.allCases) { provider in
-                serviceRow(provider)
+            if model.enabledProviders.isEmpty {
+                HStack {
+                    Text("请先开启翻译服务").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("打开设置", action: openSettings)
+                        .controlSize(.small)
+                }
+                .font(.system(size: 13))
+                .padding(10)
+                .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                ForEach(model.enabledProviders) { provider in
+                    serviceRow(provider)
+                }
             }
         }
         .padding(10)
@@ -116,11 +128,12 @@ struct TranslationView: View {
             if hasText { missingInput = nil }
             speaker?.stopSpeaking(at: .immediate)
         }
-        .onChange(of: model.result) { copiedResult = false }
         .onChange(of: model.isTranslating) {
-            if model.isTranslating { collapsed = false }
+            if model.isTranslating { collapsedProviders.removeAll() }
         }
-        .onChange(of: model.provider) { collapsed = false }
+        .onChange(of: model.enabledProviders) {
+            collapsedProviders.formIntersection(model.enabledProviders)
+        }
         .onExitCommand(perform: close)
         .background {
             if let job = model.appleJob {
@@ -185,7 +198,7 @@ struct TranslationView: View {
                     .controlSize(.small)
                     .keyboardShortcut(.return, modifiers: .command)
                     .help("翻译（⌘↩）")
-                    .disabled(!hasText)
+                    .disabled(!hasText || model.enabledProviders.isEmpty)
             }
             .padding(.horizontal, 2)
         }
@@ -260,22 +273,21 @@ struct TranslationView: View {
     }
 
     private func serviceRow(_ provider: Provider) -> some View {
-        let selected = model.provider == provider
-        let expanded = selected && !collapsed && hasText
+        let output = model.output(for: provider)
+        let expanded = !collapsedProviders.contains(provider) && hasText
         return VStack(alignment: .leading, spacing: 0) {
             Button {
-                if selected {
-                    collapsed.toggle()
+                if expanded {
+                    collapsedProviders.insert(provider)
                 } else {
-                    collapsed = false
-                    model.provider = provider
+                    collapsedProviders.remove(provider)
                 }
             } label: {
                 HStack(spacing: 8) {
                     LucideIcon(name: provider == .apple ? "languages" : "flame", size: 14)
-                        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                        .foregroundStyle(Color.accentColor)
                     Text(provider.title)
-                        .font(.system(size: 13, weight: selected ? .medium : .regular))
+                        .font(.system(size: 13, weight: .medium))
                     Spacer()
                     LucideIcon(name: expanded ? "chevron-down" : "chevron-right", size: 13)
                         .foregroundStyle(.secondary)
@@ -288,28 +300,33 @@ struct TranslationView: View {
             .accessibilityValue(expanded ? "已展开" : "已折叠")
             if expanded {
                 Divider().padding(.horizontal, 10)
-                serviceOutput
+                serviceOutput(output, for: provider)
             }
         }
         .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+        .onChange(of: output) {
+            if copiedResult == provider { copiedResult = nil }
+        }
     }
 
-    private var serviceOutput: some View {
+    private func serviceOutput(_ output: TranslationOutput, for provider: Provider) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            if model.isTranslating {
+            switch output {
+            case .translating:
                 HStack(spacing: 7) {
                     ProgressView().controlSize(.small)
                     Text("正在翻译…").foregroundStyle(.secondary)
                 }
-            } else if let error = model.error {
+            case .failed(let error):
                 readableOutput(error)
-            } else if !model.result.isEmpty {
-                readableOutput(model.result)
-                iconButton(copiedResult ? "check" : "copy", label: copiedResult ? "已复制" : "复制译文") {
-                    Clipboard.write(model.result)
-                    copiedResult = true
+            case .translated(let text):
+                readableOutput(text)
+                let copied = copiedResult == provider
+                iconButton(copied ? "check" : "copy", label: copied ? "已复制" : "复制译文") {
+                    Clipboard.write(text)
+                    copiedResult = provider
                 }
-            } else {
+            case .idle:
                 Text("按 ⌘↩ 翻译").foregroundStyle(.secondary)
             }
         }
@@ -330,7 +347,7 @@ struct TranslationView: View {
                     .textSelection(.enabled)
             }
         }
-        .frame(maxHeight: 146, alignment: .topLeading)
+        .frame(maxHeight: model.enabledProviders.count > 1 ? 110 : 146, alignment: .topLeading)
     }
 
     private func iconButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
@@ -345,7 +362,7 @@ struct TranslationView: View {
     }
 
     private func translate() {
-        collapsed = false
+        collapsedProviders.removeAll()
         model.translate()
     }
 
@@ -356,7 +373,7 @@ struct TranslationView: View {
             editorFocused = true
             return
         }
-        collapsed = false
+        collapsedProviders.removeAll()
         model.begin(with: input)
     }
 
@@ -387,10 +404,24 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("翻译") {
-                Picker("默认服务", selection: $model.provider) {
-                    ForEach(Provider.allCases) { Text($0.title).tag($0) }
+                Picker("译文语言", selection: $model.target) {
+                    Text("自动选择").tag(nil as Language?)
+                    ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
                 }
-                LabeledContent("自动选择译文语言", value: "中文 → 英语，其它 → 简体中文")
+                if model.target == nil {
+                    Text("自动选择会将中文译为英语，其它语言译为简体中文。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("翻译服务") {
+                ForEach(Provider.allCases) { provider in
+                    Toggle(provider.title, isOn: Binding(
+                        get: { model.enabledProviders.contains(provider) },
+                        set: { model.setEnabled($0, for: provider) }
+                    ))
+                }
             }
 
             Section("火山引擎") {

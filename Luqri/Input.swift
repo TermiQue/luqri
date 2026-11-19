@@ -84,6 +84,10 @@ struct Shortcut: Codable, Equatable {
         hasCommandOnly(event) && [",", "，"].contains(event.charactersIgnoringModifiers ?? "")
     }
 
+    static func isEscapeEvent(_ event: NSEvent) -> Bool {
+        event.keyCode == kVK_Escape && event.modifierFlags.intersection([.control, .option, .shift, .command]).isEmpty
+    }
+
     static func isPasteEvent(_ event: NSEvent) -> Bool {
         hasCommandOnly(event) && event.charactersIgnoringModifiers?.lowercased() == "v"
     }
