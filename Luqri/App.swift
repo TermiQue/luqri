@@ -99,7 +99,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func translateClipboard() {
         cancelWork()
-        showTranslation(Clipboard.text, at: NSEvent.mouseLocation)
+        showTranslation(Clipboard.text, at: NSEvent.mouseLocation, missingInput: .clipboard)
     }
 
     @objc private func translateManually() {
@@ -136,7 +136,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             guard let self, !Task.isCancelled else { return }
             self.work = nil
-            self.showTranslation(selection ?? Clipboard.text, at: mouse)
+            self.showTranslation(selection ?? Clipboard.text, at: mouse, missingInput: .selection)
         }
     }
 
@@ -182,8 +182,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func showTranslation(_ input: String, at anchor: CGPoint) {
+    private func showTranslation(_ input: String, at anchor: CGPoint, missingInput: MissingInput? = nil) {
         closeTranslation()
+        let hasInput = !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let panel = UtilityPanel(contentRect: .zero, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
         panel.level = .floating
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .ignoresCycle]
@@ -193,20 +194,41 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = true
+        panel.isMovableByWindowBackground = true
+        panel.title = "Luqri 翻译"
         panel.onEscape = { [weak self] in self?.closeTranslation() }
         let view = TranslationView(
-            model: model, startsEditing: input.isEmpty,
+            missingInput: hasInput ? nil : missingInput,
+            model: model, startsEditing: !hasInput,
             close: { [weak self] in self?.closeTranslation() },
-            openSettings: { [weak self] in self?.showSettings() }
+            openSettings: { [weak self] in self?.showSettings() },
+            setPinned: { [weak panel] pinned in panel?.hidesOnDeactivate = !pinned },
+            resize: { [weak self, weak panel] size in
+                Task { @MainActor in
+                    guard let self, let panel, self.translationPanel === panel else { return }
+                    self.resizeTranslation(panel, contentSize: size)
+                }
+            }
         )
         let hosting = NSHostingController(rootView: view.clipShape(RoundedRectangle(cornerRadius: 13)))
         panel.contentViewController = hosting
-        model.begin(with: input)
+        model.begin(with: hasInput ? input : "")
         hosting.view.layoutSubtreeIfNeeded()
         position(panel, contentSize: hosting.view.fittingSize, at: anchor)
         translationPanel = panel
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func resizeTranslation(_ panel: UtilityPanel, contentSize: CGSize) {
+        guard contentSize.height > 0, abs(panel.frame.height - contentSize.height) >= 1 else { return }
+        let frame = panel.frame
+        let visible = panel.screen?.visibleFrame.insetBy(dx: 8, dy: 8)
+        let height = min(contentSize.height, visible?.height ?? contentSize.height)
+        let top = min(frame.maxY, visible?.maxY ?? frame.maxY)
+        let bottom = max(top - height, visible?.minY ?? top - height)
+        guard abs(frame.height - height) >= 1 else { return }
+        panel.setFrame(CGRect(x: frame.minX, y: bottom, width: frame.width, height: height), display: true)
     }
 
     private func closeTranslation() {

@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+import NaturalLanguage
 import SwiftUI
 import Translation
 
@@ -45,19 +47,36 @@ final class UtilityPanel: NSPanel {
     override func cancelOperation(_ sender: Any?) { onEscape?() }
 }
 
+enum MissingInput {
+    case selection, clipboard
+
+    var message: String {
+        switch self {
+        case .selection: "划词翻译没有获取到文字"
+        case .clipboard: "剪贴板中没有可翻译的文字"
+        }
+    }
+}
+
 struct TranslationView: View {
-    @Environment(\.colorScheme) private var colorScheme
     @FocusState private var editorFocused: Bool
-    @State private var copied = false
+    @State private var pinned = false
+    @State private var collapsed = false
+    @State private var showingHelp = false
+    @State private var copiedSource = false
+    @State private var copiedResult = false
+    @State private var speaker: AVSpeechSynthesizer?
+    @State var missingInput: MissingInput?
 
     @Bindable var model: TranslationModel
     let startsEditing: Bool
     let close: () -> Void
     let openSettings: () -> Void
+    let setPinned: (Bool) -> Void
+    let resize: (CGSize) -> Void
 
-    private var accent: Color {
-        colorScheme == .dark ? Color(red: 0.46, green: 0.86, blue: 0.77)
-            : Color(red: 0.12, green: 0.40, blue: 0.35)
+    private var hasText: Bool {
+        !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var editorText: Binding<String> {
@@ -65,20 +84,31 @@ struct TranslationView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 7) {
             header
-            Divider()
-            languages
             editor
-            result
-            footer
+            languages
+            if !hasText, let missingInput {
+                inputHint(missingInput)
+            }
+            ForEach(Provider.allCases) { provider in
+                serviceRow(provider)
+            }
         }
-        .padding(16)
-        .frame(width: 436)
+        .padding(10)
+        .frame(width: 420)
+        .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial)
-        .tint(accent)
+        .onGeometryChange(for: CGSize.self, of: \.size, action: resize)
         .onAppear { editorFocused = startsEditing }
-        .onChange(of: model.result) { copied = false }
+        .onDisappear { speaker?.stopSpeaking(at: .immediate) }
+        .onChange(of: model.text) {
+            copiedSource = false
+            if hasText { missingInput = nil }
+            speaker?.stopSpeaking(at: .immediate)
+        }
+        .onChange(of: model.result) { copiedResult = false }
+        .onChange(of: model.provider) { collapsed = false }
         .onExitCommand(perform: close)
         .background {
             if let job = model.appleJob {
@@ -91,156 +121,244 @@ struct TranslationView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 9) {
-            LucideIcon(name: "languages", size: 19)
-                .foregroundStyle(accent)
+        HStack(spacing: 4) {
+            iconButton("pin", label: pinned ? "取消置顶" : "置顶浮窗") {
+                pinned.toggle()
+                setPinned(pinned)
+            }
+            .foregroundStyle(pinned ? Color.accentColor : Color.secondary)
+            .accessibilityAddTraits(pinned ? .isSelected : [])
+
             Text("翻译")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
             Spacer()
-            Button(action: openSettings) {
-                LucideIcon(name: "settings-2")
-            }
-            .help("设置")
-            .accessibilityLabel("设置")
-            Button(action: close) {
-                LucideIcon(name: "x")
-            }
-            .help("关闭（Esc）")
-            .accessibilityLabel("关闭")
+            iconButton("settings-2", label: "设置", action: openSettings)
+            iconButton("x", label: "关闭", action: close)
         }
-        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+    }
+
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ZStack(alignment: .topLeading) {
+                if model.text.isEmpty {
+                    Text("输入或粘贴文字")
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 5)
+                        .padding(.top, 1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+                TextEditor(text: editorText)
+                    .focused($editorFocused)
+                    .scrollContentBackground(.hidden)
+                    .accessibilityLabel("原文")
+            }
+            .font(.system(size: 14))
+            .frame(height: 52)
+
+            HStack(spacing: 1) {
+                iconButton("volume-2", label: "朗读原文", action: speak)
+                    .disabled(!hasText)
+                iconButton(copiedSource ? "check" : "copy", label: copiedSource ? "已复制" : "复制原文") {
+                    Clipboard.write(model.text)
+                    copiedSource = true
+                }
+                .disabled(!hasText)
+                iconButton("clipboard-paste", label: "翻译剪贴板", action: pasteAndTranslate)
+                Spacer()
+                Button("翻译", action: translate)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("翻译（⌘↩）")
+                    .disabled(!hasText)
+            }
+            .padding(.horizontal, 2)
+        }
+        .padding(7)
+        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(editorFocused ? Color.accentColor.opacity(0.5) : .clear)
+                .allowsHitTesting(false)
+        }
     }
 
     private var languages: some View {
         HStack(spacing: 8) {
-            Picker("原文语言", selection: $model.source) {
-                Text("检测语言").tag(nil as Language?)
-                ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
+            languagePicker("原文语言", automatic: "自动检测", selection: $model.source)
+            iconButton("arrow-left-right", label: "交换语向") {
+                let source = model.source
+                model.source = model.target
+                model.target = source
             }
-            .accessibilityLabel("原文语言")
-            LucideIcon(name: "arrow-right", size: 13)
-                .foregroundStyle(.secondary)
-            Picker("译文语言", selection: $model.target) {
-                Text("自动选择").tag(nil as Language?)
-                ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
-            }
-            .accessibilityLabel("译文语言")
-            Spacer(minLength: 5)
-            Button {
-                model.begin(with: Clipboard.text)
-                if model.text.isEmpty { editorFocused = true }
-            } label: {
-                LucideIcon(name: "clipboard-paste")
-            }
-            .buttonStyle(.borderless)
-            .help("翻译剪贴板")
-            .accessibilityLabel("翻译剪贴板")
+            .disabled(model.source == model.target)
+            languagePicker("译文语言", automatic: "自动选择", selection: $model.target)
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 30)
+        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func languagePicker(_ title: String, automatic: String, selection: Binding<Language?>) -> some View {
+        Picker(title, selection: selection) {
+            Text(automatic).tag(nil as Language?)
+            ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
         }
         .labelsHidden()
-        .fixedSize(horizontal: false, vertical: true)
+        .pickerStyle(.menu)
+        .buttonStyle(.borderless)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(title)
     }
 
-    private var editor: some View {
-        ZStack(alignment: .topLeading) {
-            if model.text.isEmpty {
-                Text("输入或粘贴要翻译的文字")
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 9)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+    private func inputHint(_ issue: MissingInput) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label {
+                Text("提示").font(.caption.weight(.semibold))
+            } icon: {
+                LucideIcon(name: "lightbulb", size: 13)
             }
-            TextEditor(text: editorText)
-                .focused($editorFocused)
-                .font(.system(size: 14))
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 8)
-                .accessibilityLabel("原文")
-        }
-        .font(.system(size: 14))
-        .frame(height: 103)
-        .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(editorFocused ? accent.opacity(0.6) : .primary.opacity(0.10))
-                .allowsHitTesting(false)
-        }
-    }
-
-    private var result: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text("译文").font(.caption.weight(.semibold))
-                    .foregroundStyle(accent)
-                Spacer()
-                if !model.result.isEmpty {
-                    Button {
-                        Clipboard.write(model.result)
-                        copied = true
-                    } label: {
-                        LucideIcon(name: copied ? "check" : "copy", size: 14)
-                    }
-                    .buttonStyle(.borderless)
-                    .help(copied ? "已复制" : "复制译文")
-                    .accessibilityLabel(copied ? "已复制" : "复制译文")
-                }
-            }
-            Group {
-                if let error = model.error {
-                    ScrollView {
-                        Text(error)
-                            .textSelection(.enabled)
-                            .foregroundStyle(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else if model.isTranslating {
-                    HStack(spacing: 7) {
-                        ProgressView().controlSize(.small)
-                        Text("正在翻译…").foregroundStyle(.secondary)
-                    }
-                } else if !model.result.isEmpty {
-                    ScrollView {
-                        Text(model.result)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+            .foregroundStyle(.secondary)
+            Text(issue.message)
+                .font(.system(size: 13))
+            if issue == .selection {
+                if showingHelp {
+                    Text("检查 Luqri 的辅助功能权限，或先复制文字，再点击输入框下方的剪贴板按钮。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("打开辅助功能设置") { Permissions.openAccessibility() }
+                        .controlSize(.small)
                 } else {
-                    Text("译文将在这里显示").foregroundStyle(.secondary)
+                    Button("如何解决") { showingHelp = true }
+                        .controlSize(.small)
                 }
+            } else {
+                Text("复制一段文字，或直接在上方输入。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .font(.system(size: 14))
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(10)
-        .frame(height: 112)
-        .background(accent.opacity(colorScheme == .dark ? 0.10 : 0.08), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(alignment: .leading) {
-            Capsule()
-                .fill(accent)
-                .frame(width: 2)
-                .padding(.vertical, 9)
-                .allowsHitTesting(false)
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var footer: some View {
-        HStack {
-            Picker("翻译服务", selection: $model.provider) {
-                ForEach(Provider.allCases) { Text($0.title).tag($0) }
+    private func serviceRow(_ provider: Provider) -> some View {
+        let selected = model.provider == provider
+        let expanded = selected && !collapsed && hasText
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if selected {
+                    collapsed.toggle()
+                } else {
+                    collapsed = false
+                    model.provider = provider
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    LucideIcon(name: provider == .apple ? "languages" : "flame", size: 14)
+                        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    Text(provider.title)
+                        .font(.system(size: 13, weight: selected ? .medium : .regular))
+                    Spacer()
+                    LucideIcon(name: expanded ? "chevron-down" : "chevron-right", size: 13)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .contentShape(Rectangle())
             }
-            .labelsHidden()
-            .accessibilityLabel("翻译服务")
-            .fixedSize()
-            Spacer()
-            Text("⌘↩").font(.caption.monospaced()).foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            Button("翻译") { model.translate() }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "已展开" : "已折叠")
+            if expanded {
+                Divider().padding(.horizontal, 10)
+                serviceOutput
+            }
         }
-        .controlSize(.regular)
+        .background(.quaternary.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var serviceOutput: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if model.isTranslating {
+                HStack(spacing: 7) {
+                    ProgressView().controlSize(.small)
+                    Text("正在翻译…").foregroundStyle(.secondary)
+                }
+            } else if let error = model.error {
+                readableOutput(error)
+            } else if !model.result.isEmpty {
+                readableOutput(model.result)
+                iconButton(copiedResult ? "check" : "copy", label: copiedResult ? "已复制" : "复制译文") {
+                    Clipboard.write(model.result)
+                    copiedResult = true
+                }
+            } else {
+                Text("按 ⌘↩ 翻译").foregroundStyle(.secondary)
+            }
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func readableOutput(_ text: String) -> some View {
+        ViewThatFits(in: .vertical) {
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            ScrollView {
+                Text(text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxHeight: 146, alignment: .topLeading)
+    }
+
+    private func iconButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            LucideIcon(name: icon, size: 14)
+                .frame(width: 23, height: 23)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    private func translate() {
+        collapsed = false
+        model.translate()
+    }
+
+    private func pasteAndTranslate() {
+        let input = Clipboard.text
+        guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            if !hasText { missingInput = .clipboard }
+            editorFocused = true
+            return
+        }
+        collapsed = false
+        model.begin(with: input)
+    }
+
+    private func speak() {
+        let synthesizer = speaker ?? AVSpeechSynthesizer()
+        speaker = synthesizer
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+            return
+        }
+        let utterance = AVSpeechUtterance(string: model.text)
+        let language = model.source?.rawValue ?? NLLanguageRecognizer.dominantLanguage(for: String(model.text.prefix(512)))?.rawValue
+        if let language { utterance.voice = AVSpeechSynthesisVoice(language: language) }
+        synthesizer.speak(utterance)
     }
 }
 
