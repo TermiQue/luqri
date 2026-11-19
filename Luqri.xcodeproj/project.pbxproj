@@ -1,0 +1,206 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1A2B3C4D00000000000000C8 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000064 /* App.swift */; };
+		1A2B3C4D00000000000000C9 /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000065 /* Input.swift */; };
+		1A2B3C4D00000000000000CA /* ScreenOCR.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000066 /* ScreenOCR.swift */; };
+		1A2B3C4D00000000000000CB /* TranslationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000067 /* TranslationModel.swift */; };
+		1A2B3C4D00000000000000CC /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000068 /* Views.swift */; };
+		1A2B3C4D00000000000000CD /* Volcengine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000069 /* Volcengine.swift */; };
+		1A2B3C4D00000000000000CE /* Icons in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006A /* Icons */; };
+		1A2B3C4D00000000000000CF /* Lucide-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1A2B3C4D0000000000000064 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "App.swift"; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000065 /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Input.swift"; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000066 /* ScreenOCR.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ScreenOCR.swift"; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000067 /* TranslationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TranslationModel.swift"; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000068 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views.swift"; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000069 /* Volcengine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Volcengine.swift"; sourceTree = "<group>"; };
+		1A2B3C4D000000000000006A /* Icons */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Icons"; sourceTree = "<group>"; };
+		1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Lucide-LICENSE.txt"; sourceTree = "<group>"; };
+		1A2B3C4D000000000000006C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info.plist"; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000005 /* Luqri.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Luqri.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1A2B3C4D0000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1A2B3C4D0000000000000002 = {
+			isa = PBXGroup;
+			children = (1A2B3C4D0000000000000003 /* Luqri */, 1A2B3C4D0000000000000004 /* Products */, );
+			sourceTree = "<group>";
+		};
+		1A2B3C4D0000000000000003 /* Luqri */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D0000000000000064 /* App.swift */,
+				1A2B3C4D0000000000000065 /* Input.swift */,
+				1A2B3C4D0000000000000066 /* ScreenOCR.swift */,
+				1A2B3C4D0000000000000067 /* TranslationModel.swift */,
+				1A2B3C4D0000000000000068 /* Views.swift */,
+				1A2B3C4D0000000000000069 /* Volcengine.swift */,
+				1A2B3C4D000000000000006A /* Icons */,
+				1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */,
+				1A2B3C4D000000000000006C /* Info.plist */,
+			);
+			path = Luqri;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D0000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (1A2B3C4D0000000000000005 /* Luqri.app */, );
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1A2B3C4D0000000000000006 /* Luqri */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A2B3C4D000000000000000B /* Build configuration list for PBXNativeTarget "Luqri" */;
+			buildPhases = (1A2B3C4D0000000000000007 /* Sources */, 1A2B3C4D0000000000000008 /* Frameworks */, 1A2B3C4D0000000000000009 /* Resources */, );
+			buildRules = ();
+			dependencies = ();
+			name = Luqri;
+			productName = Luqri;
+			productReference = 1A2B3C4D0000000000000005 /* Luqri.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1A2B3C4D0000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 1A2B3C4D000000000000000A /* Build configuration list for PBXProject "Luqri" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh-Hans;
+			hasScannedForEncodings = 0;
+			knownRegions = (zh-Hans, Base, );
+			mainGroup = 1A2B3C4D0000000000000002;
+			productRefGroup = 1A2B3C4D0000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (1A2B3C4D0000000000000006 /* Luqri */, );
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1A2B3C4D0000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A2B3C4D00000000000000CE /* Icons in Resources */,
+				1A2B3C4D00000000000000CF /* Lucide-LICENSE.txt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1A2B3C4D0000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A2B3C4D00000000000000C8 /* App.swift in Sources */,
+				1A2B3C4D00000000000000C9 /* Input.swift in Sources */,
+				1A2B3C4D00000000000000CA /* ScreenOCR.swift in Sources */,
+				1A2B3C4D00000000000000CB /* TranslationModel.swift in Sources */,
+				1A2B3C4D00000000000000CC /* Views.swift in Sources */,
+				1A2B3C4D00000000000000CD /* Volcengine.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1A2B3C4D000000000000000C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		1A2B3C4D000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		1A2B3C4D000000000000000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Luqri/Info.plist;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.termique.luqri;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		1A2B3C4D000000000000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Luqri/Info.plist;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.termique.luqri;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A2B3C4D000000000000000A /* Build configuration list for PBXProject "Luqri" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (1A2B3C4D000000000000000C /* Debug */, 1A2B3C4D000000000000000D /* Release */, );
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A2B3C4D000000000000000B /* Build configuration list for PBXNativeTarget "Luqri" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (1A2B3C4D000000000000000E /* Debug */, 1A2B3C4D000000000000000F /* Release */, );
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1A2B3C4D0000000000000001 /* Project object */;
+}
