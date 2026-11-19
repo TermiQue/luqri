@@ -42,6 +42,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var feedbackPanel: NSPanel?
     private var feedbackTask: Task<Void, Never>?
     private var work: Task<Void, Never>?
+    private var ocrProgress: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let shortcuts = GlobalShortcuts { [weak self] command in self?.perform(command) }
@@ -64,6 +65,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         for command in Command.allCases {
+            if command == .clipboardTranslate { menu.addItem(.separator()) }
             addItem(command.title, icon: command.icon, action: #selector(runCommand(_:)), to: menu) { entry in
                 entry.tag = Int(command.rawValue)
                 if !failedShortcuts.contains(command) {
@@ -72,9 +74,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
-        menu.addItem(.separator())
-        addItem("翻译剪贴板", icon: "clipboard-paste", action: #selector(translateClipboard), to: menu)
-        addItem("输入文字翻译", icon: "keyboard", action: #selector(translateManually), to: menu)
         menu.addItem(.separator())
         addItem("设置…", icon: "settings-2", action: #selector(showSettings), to: menu)
         addItem("退出 Luqri", icon: "log-out", action: #selector(quit), to: menu)
@@ -97,16 +96,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let command = Command(rawValue: UInt32(sender.tag)) { perform(command) }
     }
 
-    @objc private func translateClipboard() {
-        cancelWork()
-        showTranslation(Clipboard.text, at: NSEvent.mouseLocation, missingInput: .clipboard)
-    }
-
-    @objc private func translateManually() {
-        cancelWork()
-        showTranslation("", at: NSEvent.mouseLocation)
-    }
-
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func perform(_ command: Command) {
@@ -116,12 +105,23 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             translateSelection()
         case .recognize, .screenshotTranslate:
             startOCR(translate: command == .screenshotTranslate)
+        case .clipboardTranslate:
+            let anchor = NSEvent.mouseLocation
+            work = Task { [weak self] in
+                let text = await Clipboard.textAfterSelectionCopy()
+                guard let self, !Task.isCancelled else { return }
+                self.work = nil
+                self.showTranslation(text, at: anchor, missingInput: .clipboard)
+            }
+        case .inputTranslate:
+            showTranslation("", at: NSEvent.mouseLocation)
         }
     }
 
     private func cancelWork() {
         work?.cancel()
         work = nil
+        stopOCRProgress()
         overlay.cancel()
         clearFeedback()
     }
@@ -130,13 +130,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let mouse = NSEvent.mouseLocation
         let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         work = Task { [weak self] in
-            var selection: String?
+            var selection = ""
             if let pid, pid != ProcessInfo.processInfo.processIdentifier {
-                selection = await Task.detached(priority: .userInitiated) { SelectedText.read(from: pid) }.value
+                let lookup = await Task.detached(priority: .userInitiated) { SelectedText.read(from: pid) }.value
+                guard !Task.isCancelled else { return }
+                switch lookup {
+                case .text(let text): selection = text
+                case .tryCopy: selection = await Clipboard.copySelection(from: pid) ?? ""
+                case .unavailable: break
+                }
+                guard !Task.isCancelled, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
             }
             guard let self, !Task.isCancelled else { return }
             self.work = nil
-            self.showTranslation(selection ?? Clipboard.text, at: mouse, missingInput: .selection)
+            self.showTranslation(selection, at: mouse, missingInput: .selection)
         }
     }
 
@@ -159,13 +166,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 previousApp.activate()
             }
             guard let selection else { return }
+            self.ocrProgress = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self, !Task.isCancelled else { return }
+                self.showFeedback("正在识别文字…", icon: "scan-text", at: selection.anchor, autoHide: false)
+            }
             self.work = Task(priority: .userInitiated) { [weak self] in
                 do {
-                    // Give WindowServer a frame to remove the selection overlay before capture.
-                    try await Task.sleep(for: .milliseconds(45))
                     let text = try await ScreenOCR.recognize(selection)
                     guard let self, !Task.isCancelled else { return }
                     self.work = nil
+                    self.stopOCRProgress()
                     if translate {
                         self.showTranslation(text, at: selection.anchor)
                     } else {
@@ -175,11 +186,19 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } catch {
                     guard let self, !Task.isCancelled else { return }
                     self.work = nil
+                    self.stopOCRProgress()
                     let message = (error as? ScreenOCR.Failure)?.errorDescription ?? "截图或识别失败，请重新框选。"
                     self.showFeedback(message, icon: "x", at: selection.anchor)
                 }
             }
         }
+    }
+
+    private func stopOCRProgress() {
+        guard let ocrProgress else { return }
+        ocrProgress.cancel()
+        self.ocrProgress = nil
+        clearFeedback()
     }
 
     private func showTranslation(_ input: String, at anchor: CGPoint, missingInput: MissingInput? = nil) {
@@ -197,6 +216,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isMovableByWindowBackground = true
         panel.title = "Luqri 翻译"
         panel.onEscape = { [weak self] in self?.closeTranslation() }
+        panel.onEditorReturn = { [weak model] in
+            guard let model, !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            model.translate()
+            return true
+        }
         let view = TranslationView(
             missingInput: hasInput ? nil : missingInput,
             model: model, startsEditing: !hasInput,
@@ -262,7 +286,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func showFeedback(_ message: String, icon: String, at anchor: CGPoint) {
+    private func showFeedback(_ message: String, icon: String, at anchor: CGPoint, autoHide: Bool = true) {
         clearFeedback()
         let panel = NSPanel(
             contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
@@ -279,6 +303,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         position(panel, contentSize: content.fittingSize, at: anchor)
         feedbackPanel = panel
         panel.orderFrontRegardless()
+        guard autoHide else { return }
         feedbackTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             if !Task.isCancelled { self?.clearFeedback() }

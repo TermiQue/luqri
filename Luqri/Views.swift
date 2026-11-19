@@ -42,9 +42,18 @@ struct LucideIcon: View {
 @MainActor
 final class UtilityPanel: NSPanel {
     var onEscape: (() -> Void)?
+    var onEditorReturn: (() -> Bool)?
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func cancelOperation(_ sender: Any?) { onEscape?() }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.charactersIgnoringModifiers == "\r",
+           event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty,
+           let editor = firstResponder as? NSTextView, !editor.hasMarkedText(),
+           let onEditorReturn, event.isARepeat || onEditorReturn() { return }
+        super.sendEvent(event)
+    }
 }
 
 enum MissingInput {
@@ -108,6 +117,9 @@ struct TranslationView: View {
             speaker?.stopSpeaking(at: .immediate)
         }
         .onChange(of: model.result) { copiedResult = false }
+        .onChange(of: model.isTranslating) {
+            if model.isTranslating { collapsed = false }
+        }
         .onChange(of: model.provider) { collapsed = false }
         .onExitCommand(perform: close)
         .background {
@@ -226,7 +238,7 @@ struct TranslationView: View {
                 .font(.system(size: 13))
             if issue == .selection {
                 if showingHelp {
-                    Text("检查 Luqri 的辅助功能权限，或先复制文字，再点击输入框下方的剪贴板按钮。")
+                    Text("检查 Luqri 的辅助功能权限，或先复制文字再按 ⌥⇧V 翻译。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
