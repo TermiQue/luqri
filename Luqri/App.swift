@@ -180,7 +180,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         case .screenshotTranslate:
             recognizeScreenshot(keepsFocus: true) { [weak self] text, _ in
-                self?.showTranslation(text)
+                self?.showTranslation(text, appearance: NSAppearance(named: .aqua))
             }
         }
     }
@@ -266,12 +266,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         clearFeedback()
     }
 
-    private func showTranslation(_ input: String? = nil, needsSelectionPermission: Bool = false) {
+    private func showTranslation(
+        _ input: String? = nil, needsSelectionPermission: Bool = false, appearance: NSAppearance? = nil
+    ) {
         let screen = NSScreen.main ?? NSScreen.screens.first
         closeTranslation()
         let input = input ?? ""
         let hasInput = input.hasNonWhitespace
         let panel = UtilityPanel(contentRect: .zero, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
+        panel.appearance = appearance
         panel.level = .floating
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .ignoresCycle]
         panel.backgroundColor = .clear
@@ -409,6 +412,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let panel = NSPanel(
             contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
         )
+        panel.appearance = NSAppearance(named: .aqua)
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true

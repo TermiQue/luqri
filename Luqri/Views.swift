@@ -634,6 +634,6 @@ struct FeedbackView: View {
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 9)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+        .background(.white, in: RoundedRectangle(cornerRadius: 9))
     }
 }

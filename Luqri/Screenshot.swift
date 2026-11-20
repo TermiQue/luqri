@@ -159,7 +159,7 @@ private final class SelectionView: NSView {
         string: "拖动框选文字   ·   Esc 取消",
         attributes: [
             .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: NSColor.white
+            .foregroundColor: NSColor.black
         ]
     )
     private static let hintSize = hint.size()
@@ -198,7 +198,7 @@ private final class SelectionView: NSView {
             border.lineWidth = 1
             border.stroke()
         } else if hasHint, dirtyRect.intersects(hintBackground) {
-            NSColor.black.withAlphaComponent(0.72).setFill()
+            NSColor.white.setFill()
             NSBezierPath(roundedRect: hintBackground, xRadius: 7, yRadius: 7).fill()
             Self.hint.draw(in: hintFrame)
         }
