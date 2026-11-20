@@ -377,6 +377,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false
             )
             window.contentViewController = controller
+            window.initialFirstResponder = controller.view
             window.title = "Luqri 设置"
             window.collectionBehavior = [.managed, .primary]
             window.isReleasedWhenClosed = false
