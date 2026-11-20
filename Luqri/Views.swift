@@ -371,10 +371,7 @@ struct TranslationView: View {
         VStack(alignment: .leading, spacing: 6) {
             switch output {
             case .translating:
-                HStack(spacing: 7) {
-                    ProgressView().controlSize(.small)
-                    Text("正在翻译…").foregroundStyle(.secondary)
-                }
+                TranslationProgressView()
             case .failed(let error):
                 readableOutput(error)
             case .translated(let text):
@@ -446,6 +443,39 @@ struct TranslationView: View {
         let language = model.source?.rawValue ?? NLLanguageRecognizer.dominantLanguage(for: String(model.text.prefix(512)))?.rawValue
         if let language { utterance.voice = AVSpeechSynthesisVoice(language: language) }
         synthesizer.speak(utterance)
+    }
+}
+
+private struct TranslationProgressView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("正在翻译")
+            Group {
+                if reduceMotion {
+                    dots(highlighted: nil)
+                } else {
+                    PhaseAnimator(0..<3) { phase in
+                        dots(highlighted: phase)
+                    } animation: { _ in
+                        .easeInOut(duration: 0.24)
+                    }
+                }
+            }
+            .accessibilityHidden(true)
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private func dots(highlighted: Int?) -> some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3) { index in
+                Circle()
+                    .frame(width: 4, height: 4)
+                    .opacity(highlighted == nil || highlighted == index ? 1 : 0.25)
+            }
+        }
     }
 }
 
