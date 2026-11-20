@@ -173,6 +173,7 @@ private final class SelectionView: NSView {
 
     private let hasHint: Bool
     private let onSelection: (CGRect, CGPoint) -> Void
+    private var hintTrackingArea: NSTrackingArea?
     private var start: CGPoint?
     private var selection = CGRect.zero
 
@@ -191,6 +192,20 @@ private final class SelectionView: NSView {
         addCursorRect(bounds, cursor: .crosshair)
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        guard hasHint else { return }
+        if let hintTrackingArea { removeTrackingArea(hintTrackingArea) }
+        let area = NSTrackingArea(
+            rect: hintAvoidanceRect, options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil
+        )
+        addTrackingArea(area)
+        hintTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { invalidateHint() }
+    override func mouseExited(with event: NSEvent) { invalidateHint() }
+
     override func draw(_ dirtyRect: CGRect) {
         NSGraphicsContext.current?.cgContext.clear(dirtyRect)
         let overlay = NSBezierPath(rect: bounds)
@@ -204,7 +219,7 @@ private final class SelectionView: NSView {
             let border = NSBezierPath(rect: selection)
             border.lineWidth = 1
             border.stroke()
-        } else if hasHint, dirtyRect.intersects(hintBackground) {
+        } else if dirtyRect.intersects(hintBackground), shouldShowHint {
             NSColor.white.setFill()
             NSBezierPath(roundedRect: hintBackground, xRadius: 7, yRadius: 7).fill()
             Self.hint.draw(in: hintFrame)
@@ -217,10 +232,22 @@ private final class SelectionView: NSView {
     }
 
     private var hintBackground: CGRect { hintFrame.insetBy(dx: -14, dy: -8) }
+    private var hintAvoidanceRect: CGRect { hintBackground.insetBy(dx: -10, dy: -10) }
+
+    private var shouldShowHint: Bool {
+        guard hasHint, start == nil, let window else { return false }
+        let pointer = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return !hintAvoidanceRect.contains(pointer)
+    }
+
+    private func invalidateHint() {
+        if hasHint { setNeedsDisplay(hintBackground.insetBy(dx: -1, dy: -1).integral) }
+    }
 
     override func mouseDown(with event: NSEvent) {
         start = location(event)
         setSelection(.zero)
+        invalidateHint()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -233,6 +260,7 @@ private final class SelectionView: NSView {
         start = nil
         guard final.width >= 4, final.height >= 4 else {
             setSelection(.zero)
+            invalidateHint()
             return
         }
         onSelection(final.integral.intersection(bounds), end)
@@ -252,9 +280,6 @@ private final class SelectionView: NSView {
         selection = next
         let affected = previous.isEmpty ? next : next.isEmpty ? previous : previous.union(next)
         if !affected.isEmpty { setNeedsDisplay(affected.insetBy(dx: -1, dy: -1).integral) }
-        if hasHint, previous.isEmpty != next.isEmpty {
-            setNeedsDisplay(hintBackground.insetBy(dx: -1, dy: -1).integral)
-        }
     }
 
     private func location(_ event: NSEvent) -> CGPoint {
