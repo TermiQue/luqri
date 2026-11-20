@@ -113,9 +113,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func buildMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let icon = NSApp.applicationIconImage.copy() as? NSImage
-        icon?.size = NSSize(width: 18, height: 18)
-        item.button?.image = icon
+        item.button?.image = LucideIcon.menuImage("languages", size: 18)
         item.button?.toolTip = "Luqri"
         item.button?.setAccessibilityLabel("Luqri")
         let menu = NSMenu()
@@ -416,7 +414,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.contentViewController = controller
             window.initialFirstResponder = controller.view
             window.title = "Luqri 设置"
-            window.addTitlebarAccessoryViewController(settingsIconAccessory())
             window.collectionBehavior = [.managed, .primary]
             window.isReleasedWhenClosed = false
             window.delegate = self
@@ -434,27 +431,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func settingsIconAccessory() -> NSTitlebarAccessoryViewController {
-        let accessory = NSTitlebarAccessoryViewController()
-        accessory.layoutAttribute = .left
-        let container = NSView(frame: CGRect(x: 0, y: 0, width: 24, height: 16))
-        let icon = NSImageView(image: NSApp.applicationIconImage)
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(icon)
-        NSLayoutConstraint.activate([
-            icon.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16),
-            icon.heightAnchor.constraint(equalToConstant: 16)
-        ])
-        accessory.view = container
-        return accessory
-    }
-
     private func focusSettings(_ window: NSWindow) {
         settingsAwaitingFocus = window
-        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
+        if NSApp.activationPolicy() != .regular, NSApp.setActivationPolicy(.regular) {
+            let tile = NSApp.dockTile
+            let icon = NSImageView(frame: CGRect(origin: .zero, size: tile.size))
+            icon.image = NSApp.applicationIconImage
+            icon.imageScaling = .scaleProportionallyUpOrDown
+            icon.autoresizingMask = [.width, .height]
+            tile.contentView = icon
+            tile.display()
+        }
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.orderFrontRegardless()
         NSApp.activate()
@@ -478,6 +465,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settingsAwaitingFocus = nil
             settingsWindow = nil
             NSApp.setActivationPolicy(.accessory)
+            NSApp.dockTile.contentView = nil
         }
     }
 
