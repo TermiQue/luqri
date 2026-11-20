@@ -242,11 +242,13 @@ struct TranslationView: View {
             .foregroundStyle(pinned ? Color.accentColor : Color.secondary)
             .accessibilityAddTraits(pinned ? .isSelected : [])
 
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 16, height: 16)
-                .accessibilityHidden(true)
+            if let icon = LuqriApp.bundledIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
+            }
             Text("翻译")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.primary)

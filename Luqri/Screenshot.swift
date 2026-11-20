@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import ScreenCaptureKit
 
 struct Screenshot: Sendable {
@@ -182,6 +183,13 @@ private final class SelectionView: NSView {
 
     private let hasHint: Bool
     private let onSelection: (CGRect, CGPoint) -> Void
+    private let topShade = CALayer()
+    private let bottomShade = CALayer()
+    private let leftShade = CALayer()
+    private let rightShade = CALayer()
+    private let border = CALayer()
+    private let hint = CALayer()
+    private let hintText = CATextLayer()
     private var hintTrackingArea: NSTrackingArea?
     private var start: CGPoint?
     private var selection = CGRect.zero
@@ -190,6 +198,28 @@ private final class SelectionView: NSView {
         self.hasHint = hasHint
         self.onSelection = onSelection
         super.init(frame: frame)
+        let root = CALayer()
+        root.isGeometryFlipped = true
+        let shade = NSColor.black.withAlphaComponent(0.29).cgColor
+        for layer in [topShade, bottomShade, leftShade, rightShade] {
+            layer.backgroundColor = shade
+            root.addSublayer(layer)
+        }
+        border.borderColor = NSColor.white.withAlphaComponent(0.95).cgColor
+        border.borderWidth = 1
+        root.addSublayer(border)
+
+        if hasHint {
+            hint.backgroundColor = NSColor.white.cgColor
+            hint.cornerRadius = 7
+            hintText.string = Self.hint
+            hintText.alignmentMode = .center
+            hint.addSublayer(hintText)
+            root.addSublayer(hint)
+        }
+        layer = root
+        wantsLayer = true
+        updateLayers()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -199,6 +229,22 @@ private final class SelectionView: NSView {
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .crosshair)
+    }
+
+    override func layout() {
+        super.layout()
+        updateLayers()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        hintText.contentsScale = window?.backingScaleFactor ?? 1
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        hintText.contentsScale = window?.backingScaleFactor ?? 1
+        updateHintVisibility()
     }
 
     override func updateTrackingAreas() {
@@ -212,26 +258,31 @@ private final class SelectionView: NSView {
         hintTrackingArea = area
     }
 
-    override func mouseEntered(with event: NSEvent) { invalidateHint() }
-    override func mouseExited(with event: NSEvent) { invalidateHint() }
+    override func mouseEntered(with event: NSEvent) { updateHintVisibility() }
+    override func mouseExited(with event: NSEvent) { updateHintVisibility() }
 
-    override func draw(_ dirtyRect: CGRect) {
-        NSGraphicsContext.current?.cgContext.clear(dirtyRect)
-        let overlay = NSBezierPath(rect: bounds)
-        if !selection.isEmpty { overlay.appendRect(selection) }
-        overlay.windingRule = .evenOdd
-        NSColor.black.withAlphaComponent(0.29).setFill()
-        overlay.fill()
-
-        if !selection.isEmpty {
-            NSColor.white.withAlphaComponent(0.95).setStroke()
-            let border = NSBezierPath(rect: selection)
-            border.lineWidth = 1
-            border.stroke()
-        } else if dirtyRect.intersects(hintBackground), shouldShowHint {
-            NSColor.white.setFill()
-            NSBezierPath(roundedRect: hintBackground, xRadius: 7, yRadius: 7).fill()
-            Self.hint.draw(in: hintFrame)
+    private func updateLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        let opening = selection.intersection(bounds)
+        border.isHidden = opening.isEmpty
+        if opening.isEmpty {
+            topShade.frame = bounds
+            bottomShade.frame = .zero
+            leftShade.frame = .zero
+            rightShade.frame = .zero
+        } else {
+            topShade.frame = CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: opening.minY - bounds.minY)
+            bottomShade.frame = CGRect(x: bounds.minX, y: opening.maxY, width: bounds.width, height: bounds.maxY - opening.maxY)
+            leftShade.frame = CGRect(x: bounds.minX, y: opening.minY, width: opening.minX - bounds.minX, height: opening.height)
+            rightShade.frame = CGRect(x: opening.maxX, y: opening.minY, width: bounds.maxX - opening.maxX, height: opening.height)
+            border.frame = opening.insetBy(dx: -0.5, dy: -0.5)
+        }
+        if hasHint {
+            hint.frame = hintBackground
+            hintText.frame = CGRect(x: 14, y: 8, width: Self.hintSize.width, height: Self.hintSize.height)
+            hint.isHidden = !shouldShowHint
         }
     }
 
@@ -249,14 +300,18 @@ private final class SelectionView: NSView {
         return !hintAvoidanceRect.contains(pointer)
     }
 
-    private func invalidateHint() {
-        if hasHint { setNeedsDisplay(hintBackground.insetBy(dx: -1, dy: -1).integral) }
+    private func updateHintVisibility() {
+        guard hasHint else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        hint.isHidden = !shouldShowHint
+        CATransaction.commit()
     }
 
     override func mouseDown(with event: NSEvent) {
         start = location(event)
         setSelection(.zero)
-        invalidateHint()
+        updateHintVisibility()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -269,7 +324,7 @@ private final class SelectionView: NSView {
         start = nil
         guard final.width >= 4, final.height >= 4 else {
             setSelection(.zero)
-            invalidateHint()
+            updateHintVisibility()
             return
         }
         onSelection(final.integral.intersection(bounds), end)
@@ -284,32 +339,9 @@ private final class SelectionView: NSView {
     }
 
     private func setSelection(_ next: CGRect) {
-        let previous = selection
-        guard previous != next else { return }
+        guard selection != next else { return }
         selection = next
-        if previous.isEmpty || next.isEmpty {
-            invalidateSelectionArea(previous.isEmpty ? next : previous)
-            return
-        }
-
-        // Only the strips swept by the moving edges and their borders need repainting.
-        let envelope = previous.union(next)
-        func verticalEdge(from old: CGFloat, to new: CGFloat) {
-            guard old != new else { return }
-            invalidateSelectionArea(CGRect(x: min(old, new), y: envelope.minY, width: abs(old - new), height: envelope.height))
-        }
-        func horizontalEdge(from old: CGFloat, to new: CGFloat) {
-            guard old != new else { return }
-            invalidateSelectionArea(CGRect(x: envelope.minX, y: min(old, new), width: envelope.width, height: abs(old - new)))
-        }
-        verticalEdge(from: previous.minX, to: next.minX)
-        verticalEdge(from: previous.maxX, to: next.maxX)
-        horizontalEdge(from: previous.minY, to: next.minY)
-        horizontalEdge(from: previous.maxY, to: next.maxY)
-    }
-
-    private func invalidateSelectionArea(_ area: CGRect) {
-        if !area.isEmpty { setNeedsDisplay(area.insetBy(dx: -1, dy: -1).integral) }
+        updateLayers()
     }
 
     private func location(_ event: NSEvent) -> CGPoint {

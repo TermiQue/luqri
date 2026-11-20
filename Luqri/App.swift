@@ -5,13 +5,14 @@ import SwiftUI
 @main
 @MainActor
 enum LuqriApp {
+    static let bundledIcon: NSImage? = {
+        guard let iconFile = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
+              let url = Bundle.main.url(forResource: iconFile, withExtension: nil) else { return nil }
+        return NSImage(contentsOf: url)
+    }()
+
     static func main() {
         let application = NSApplication.shared
-        if let iconFile = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
-           let url = Bundle.main.url(forResource: iconFile, withExtension: nil),
-           let icon = NSImage(contentsOf: url) {
-            application.applicationIconImage = icon
-        }
         let delegate = AppController()
         application.delegate = delegate
         application.setActivationPolicy(.accessory)
@@ -482,6 +483,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if NSApp.activationPolicy() != .regular, NSApp.setActivationPolicy(.regular) {
             let tile = NSApp.dockTile
             let icon = NSImageView(frame: CGRect(origin: .zero, size: tile.size))
+            if let artwork = LuqriApp.bundledIcon { NSApp.applicationIconImage = artwork }
             icon.image = NSApp.applicationIconImage
             icon.imageScaling = .scaleProportionallyUpOrDown
             icon.autoresizingMask = [.width, .height]
@@ -521,6 +523,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             settingsWindow = nil
             NSApp.setActivationPolicy(.accessory)
             NSApp.dockTile.contentView = nil
+            NSApp.applicationIconImage = nil
         }
     }
 
