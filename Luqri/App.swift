@@ -1,5 +1,5 @@
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import ImageIO
 import SwiftUI
 
@@ -36,16 +36,46 @@ enum LuqriApp {
 }
 
 @MainActor
-enum Permissions {
-    static func openAccessibility() {
-        open("Privacy_Accessibility")
+enum AppPermission: String, CaseIterable {
+    case accessibility, screenRecording
+
+    var title: String {
+        switch self {
+        case .accessibility: "辅助功能"
+        case .screenRecording: "录屏与系统录音"
+        }
     }
 
-    static func openScreenCapture() {
-        open("Privacy_ScreenCapture")
+    var purpose: String {
+        switch self {
+        case .accessibility: "读取选中文字"
+        case .screenRecording: "截图识别与翻译"
+        }
     }
 
-    private static func open(_ anchor: String) {
+    var isGranted: Bool {
+        switch self {
+        case .accessibility: AXIsProcessTrusted()
+        case .screenRecording: CGPreflightScreenCaptureAccess()
+        }
+    }
+
+    func requestOrManage() {
+        let defaults = UserDefaults.standard
+        let requestKey = "requestedPermission.\(rawValue)"
+        if !isGranted, !defaults.bool(forKey: requestKey) {
+            defaults.set(true, forKey: requestKey)
+            switch self {
+            case .accessibility:
+                let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+                _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+            case .screenRecording:
+                _ = CGRequestScreenCaptureAccess()
+            }
+            return
+        }
+
+        let anchor = self == .accessibility ? "Privacy_Accessibility" : "Privacy_ScreenCapture"
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else { return }
         NSWorkspace.shared.open(url)
     }
@@ -66,6 +96,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private var feedbackPanel: NSPanel?
     private var feedbackTask: Task<Void, Never>?
     private var work: Task<Void, Never>?
+    private var showingScreenPermissionAlert = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let shortcuts = GlobalShortcuts(
@@ -291,7 +322,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     private func translateSelection() {
-        guard AXIsProcessTrusted() else {
+        guard AppPermission.accessibility.isGranted else {
             showTranslation(needsSelectionPermission: true)
             return
         }
@@ -331,6 +362,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
                 try await process(provider, screenshot)
             } catch ScreenshotCapture.Failure.permissionDenied {
                 if !Task.isCancelled { self.showScreenRecordingPermission() }
+            } catch is CancellationError {
+                if !Task.isCancelled { ScreenshotCapture.restoreFocus(to: previousApp) }
             } catch {
                 guard !Task.isCancelled else { return }
                 ScreenshotCapture.restoreFocus(to: previousApp)
@@ -341,13 +374,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     private func showScreenRecordingPermission() {
+        guard !showingScreenPermissionAlert else { return }
+        showingScreenPermissionAlert = true
+        defer { showingScreenPermissionAlert = false }
+
         let alert = NSAlert()
-        alert.messageText = "允许 Luqri 录制屏幕"
-        alert.informativeText = "在系统设置中为 Luqri 启用屏幕录制权限，再重试截图。"
-        alert.addButton(withTitle: "打开系统设置")
+        alert.messageText = "截图需要录屏权限"
+        alert.informativeText = "在系统设置中允许 Luqri 录屏后，请重新触发截图。若 macOS 要求退出，请重新打开 Luqri。"
+        alert.addButton(withTitle: "前往授权")
         alert.addButton(withTitle: "稍后")
         NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn { Permissions.openScreenCapture() }
+        if alert.runModal() == .alertFirstButtonReturn { AppPermission.screenRecording.requestOrManage() }
     }
 
     private func showTranslation(

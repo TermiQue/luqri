@@ -37,13 +37,19 @@ final class ScreenshotCapture {
 
     func capture(keepsFocus: Bool = false, maximumPixelDimension: Int? = nil) async throws -> Screenshot? {
         try Task.checkCancellation()
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+        guard AppPermission.screenRecording.isGranted else {
             throw Failure.permissionDenied
         }
         guard let selection = try await selectRegion(keepsFocus: keepsFocus) else { return nil }
-        let image = try await Self.captureImage(selection, maximumPixelDimension: maximumPixelDimension)
-        try Task.checkCancellation()
-        return Screenshot(image: image, anchor: selection.anchor)
+        do {
+            let image = try await Self.captureImage(selection, maximumPixelDimension: maximumPixelDimension)
+            try Task.checkCancellation()
+            return Screenshot(image: image, anchor: selection.anchor)
+        } catch let error as SCStreamError where error.code == .userDeclined {
+            throw Failure.permissionDenied
+        } catch let error as SCStreamError where error.code == .userStopped {
+            throw CancellationError()
+        }
     }
 
     func cancelSelection() {

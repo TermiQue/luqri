@@ -159,7 +159,7 @@ struct TranslationView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !hasText && needsSelectionPermission {
-                notice("读取选中文字需授权辅助功能", action: "打开系统设置") { Permissions.openAccessibility() }
+                notice("读取选中文字需授权辅助功能", action: "前往授权") { AppPermission.accessibility.requestOrManage() }
             } else if !hasText && showEmptyClipboardHint {
                 clipboardHint
             }
@@ -595,6 +595,7 @@ struct SettingsView: View {
     @State private var secretKey = ""
     @State private var status = ""
     @State private var hasCredentials = false
+    @State private var grantedPermissions: Set<AppPermission> = []
 
     var body: some View {
         Form {
@@ -691,16 +692,24 @@ struct SettingsView: View {
             }
 
             Section("系统权限") {
-                LabeledContent("读取选中文字") {
-                    Button("辅助功能设置") { Permissions.openAccessibility() }
-                }
-                LabeledContent("截图识别与翻译") {
-                    Button("屏幕录制设置") { Permissions.openScreenCapture() }
+                ForEach(AppPermission.allCases, id: \.self) { permission in
+                    let granted = grantedPermissions.contains(permission)
+                    LabeledContent(permission.title) {
+                        Text(granted ? "已授权" : "未授权")
+                            .foregroundStyle(.secondary)
+                        Button(granted ? "管理…" : "授权…") { permission.requestOrManage() }
+                            .accessibilityLabel("\(granted ? "管理" : "授权")\(permission.title)")
+                    }
+                    .help(permission.purpose)
                 }
             }
         }
         .formStyle(.grouped)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissions()
+        }
         .onAppear {
+            refreshPermissions()
             do {
                 let credentials = try CloudCredentials.load()
                 hasCredentials = credentials != nil
@@ -710,6 +719,10 @@ struct SettingsView: View {
                 status = error.localizedDescription
             }
         }
+    }
+
+    private func refreshPermissions() {
+        grantedPermissions = Set(AppPermission.allCases.filter(\.isGranted))
     }
 
     private func billingLink(_ label: String, destination: URL) -> some View {
