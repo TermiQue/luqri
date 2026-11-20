@@ -127,6 +127,26 @@ private struct ScreenSelection: Sendable {
 
 @MainActor
 private final class SelectionOverlay {
+    static let cursor: NSCursor = {
+        let size = CGSize(width: 24, height: 24)
+        let image = NSImage(size: size, flipped: false) { _ in
+            let cross = NSBezierPath()
+            cross.move(to: CGPoint(x: 5, y: 12))
+            cross.line(to: CGPoint(x: 19, y: 12))
+            cross.move(to: CGPoint(x: 12, y: 5))
+            cross.line(to: CGPoint(x: 12, y: 19))
+            cross.lineCapStyle = .round
+            NSColor.black.setStroke()
+            cross.lineWidth = 4
+            cross.stroke()
+            NSColor.white.setStroke()
+            cross.lineWidth = 2
+            cross.stroke()
+            return true
+        }
+        return NSCursor(image: image, hotSpot: CGPoint(x: 12, y: 12))
+    }()
+
     private var windows: [UtilityPanel] = []
     private var completion: ((ScreenSelection?) -> Void)?
     private var hasSelectionCursor = false
@@ -167,7 +187,7 @@ private final class SelectionOverlay {
         }
         NSApp.activate()
         keyWindow.makeKeyAndOrderFront(nil)
-        NSCursor.crosshair.push()
+        Self.cursor.push()
         hasSelectionCursor = true
     }
 
@@ -178,12 +198,12 @@ private final class SelectionOverlay {
     private func finish(_ selection: ScreenSelection?) {
         let callback = completion
         completion = nil
+        for window in windows { window.orderOut(nil) }
+        windows.removeAll()
         if hasSelectionCursor {
             NSCursor.pop()
             hasSelectionCursor = false
         }
-        for window in windows { window.orderOut(nil) }
-        windows.removeAll()
         callback?(selection)
     }
 }
@@ -237,6 +257,9 @@ private final class SelectionView: NSView {
         }
         layer = root
         wantsLayer = true
+        addTrackingArea(NSTrackingArea(
+            rect: .zero, options: [.cursorUpdate, .inVisibleRect, .activeInActiveApp], owner: self, userInfo: nil
+        ))
         updateLayers()
     }
 
@@ -245,8 +268,8 @@ private final class SelectionView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .crosshair)
+    override func cursorUpdate(with event: NSEvent) {
+        if window?.isVisible == true { SelectionOverlay.cursor.set() }
     }
 
     override func layout() {
@@ -327,6 +350,7 @@ private final class SelectionView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        SelectionOverlay.cursor.set()
         start = location(event)
         setSelection(.zero)
         updateHintVisibility()
