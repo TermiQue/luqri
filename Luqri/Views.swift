@@ -130,7 +130,7 @@ struct TranslationView: View {
     @State private var copiedSource = false
     @State private var copiedResult: Provider?
     @State private var speaker: AVSpeechSynthesizer?
-    @State var showEmptyClipboardHint = false
+    @State private var showEmptyClipboardHint = false
 
     let needsSelectionPermission: Bool
     @Bindable var model: TranslationModel

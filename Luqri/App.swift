@@ -256,7 +256,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var anchor = NSEvent.mouseLocation
             defer { if !Task.isCancelled { self.work = nil } }
             do {
-                guard let screenshot = try await self.screenshotCapture.capture(keepsFocus: keepsFocus) else { return }
+                guard let screenshot = try await self.screenshotCapture.capture(
+                    keepsFocus: keepsFocus, maximumPixelDimension: provider.maximumCaptureDimension
+                ) else { return }
                 try Task.checkCancellation()
                 anchor = screenshot.anchor
                 try await process(provider, screenshot)
@@ -371,6 +373,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         translationHasTakenFocus = false
         translationPinned = false
         panel?.orderOut(nil)
+        panel?.contentViewController = nil
         model.reset()
     }
 
@@ -480,6 +483,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         feedbackTask?.cancel()
         feedbackTask = nil
         feedbackPanel?.orderOut(nil)
+        feedbackPanel?.contentView = nil
         feedbackPanel = nil
     }
 

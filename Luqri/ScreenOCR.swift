@@ -14,6 +14,10 @@ enum OCRProvider: String, CaseIterable, Identifiable {
         }
     }
 
+    var maximumCaptureDimension: Int? {
+        self == .volcengine ? VolcengineOCR.maximumImageDimension : nil
+    }
+
     static func selected(in defaults: UserDefaults = .standard) -> Self {
         Self(rawValue: defaults.string(forKey: preferenceKey) ?? "") ?? .appleVision
     }

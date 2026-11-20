@@ -4,6 +4,8 @@ import ImageIO
 import UniformTypeIdentifiers
 
 enum VolcengineOCR {
+    static let maximumImageDimension = 2048
+
     enum Failure: LocalizedError {
         case cannotEncodeImage, imageTooLarge, invalidResponse
 
@@ -49,15 +51,18 @@ enum VolcengineOCR {
     static func recognize(_ image: CGImage) async throws -> String {
         try Task.checkCancellation()
         guard let credentials = try CloudCredentials.load() else { throw VolcengineError.missingCredentials }
-        let image = try prepare(image)
-        let payload = try formPayload(for: image)
-        try Task.checkCancellation()
-        let request = Volcengine.signedRequest(
-            payload: payload, credentials: credentials, date: Date(), operation: .multilingualOCR
-        )
+        let (request, imageHeight) = try autoreleasepool {
+            let prepared = try prepare(image)
+            let payload = try formPayload(for: prepared)
+            try Task.checkCancellation()
+            let request = Volcengine.signedRequest(
+                payload: payload, credentials: credentials, date: Date(), operation: .multilingualOCR
+            )
+            return (request, prepared.height)
+        }
         let (data, status) = try await Volcengine.send(request)
         try Task.checkCancellation()
-        return try decode(data, httpStatus: status, imageHeight: image.height)
+        return try decode(data, httpStatus: status, imageHeight: imageHeight)
     }
 
     static func decode(_ data: Data, httpStatus: Int, imageHeight: Int) throws -> String {
@@ -84,7 +89,7 @@ enum VolcengineOCR {
     }
 
     static func prepare(_ image: CGImage) throws -> CGImage {
-        let scale = min(1, 2048 / CGFloat(max(image.width, image.height)))
+        let scale = min(1, CGFloat(maximumImageDimension) / CGFloat(max(image.width, image.height)))
         let scaledWidth = max(1, Int((CGFloat(image.width) * scale).rounded()))
         let scaledHeight = max(1, Int((CGFloat(image.height) * scale).rounded()))
         let width = max(256, scaledWidth)

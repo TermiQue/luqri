@@ -22,13 +22,13 @@ final class ScreenshotCapture {
     private let overlay = SelectionOverlay()
     private var selectionID: UUID?
 
-    func capture(keepsFocus: Bool = false) async throws -> Screenshot? {
+    func capture(keepsFocus: Bool = false, maximumPixelDimension: Int? = nil) async throws -> Screenshot? {
         try Task.checkCancellation()
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
             throw Failure.permissionDenied
         }
         guard let selection = try await selectRegion(keepsFocus: keepsFocus) else { return nil }
-        let image = try await Self.captureImage(selection)
+        let image = try await Self.captureImage(selection, maximumPixelDimension: maximumPixelDimension)
         try Task.checkCancellation()
         return Screenshot(image: image, anchor: selection.anchor)
     }
@@ -72,7 +72,9 @@ final class ScreenshotCapture {
         return selection
     }
 
-    private nonisolated static func captureImage(_ selection: ScreenSelection) async throws -> CGImage {
+    private nonisolated static func captureImage(
+        _ selection: ScreenSelection, maximumPixelDimension: Int?
+    ) async throws -> CGImage {
         let contents = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = contents.displays.first(where: { $0.displayID == selection.displayID }) else {
             throw Failure.displayUnavailable
@@ -82,12 +84,19 @@ final class ScreenshotCapture {
         let ownApplications = contents.applications.filter { $0.processID == pid }
         let filter = SCContentFilter(display: display, excludingApplications: ownApplications, exceptingWindows: [])
         let configuration = SCStreamConfiguration()
-        let scale = CGFloat(filter.pointPixelScale)
         configuration.sourceRect = selection.rect
-        configuration.width = max(1, Int((selection.rect.width * scale).rounded()))
-        configuration.height = max(1, Int((selection.rect.height * scale).rounded()))
+        let size = pixelSize(for: selection.rect.size, scale: CGFloat(filter.pointPixelScale), limit: maximumPixelDimension)
+        configuration.width = size.width
+        configuration.height = size.height
         configuration.showsCursor = false
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+    }
+
+    private nonisolated static func pixelSize(
+        for size: CGSize, scale: CGFloat, limit: Int?
+    ) -> (width: Int, height: Int) {
+        let outputScale = limit.map { min(scale, CGFloat($0) / max(size.width, size.height)) } ?? scale
+        return (max(1, Int((size.width * outputScale).rounded())), max(1, Int((size.height * outputScale).rounded())))
     }
 }
 
@@ -278,8 +287,29 @@ private final class SelectionView: NSView {
         let previous = selection
         guard previous != next else { return }
         selection = next
-        let affected = previous.isEmpty ? next : next.isEmpty ? previous : previous.union(next)
-        if !affected.isEmpty { setNeedsDisplay(affected.insetBy(dx: -1, dy: -1).integral) }
+        if previous.isEmpty || next.isEmpty {
+            invalidateSelectionArea(previous.isEmpty ? next : previous)
+            return
+        }
+
+        // Only the strips swept by the moving edges and their borders need repainting.
+        let envelope = previous.union(next)
+        func verticalEdge(from old: CGFloat, to new: CGFloat) {
+            guard old != new else { return }
+            invalidateSelectionArea(CGRect(x: min(old, new), y: envelope.minY, width: abs(old - new), height: envelope.height))
+        }
+        func horizontalEdge(from old: CGFloat, to new: CGFloat) {
+            guard old != new else { return }
+            invalidateSelectionArea(CGRect(x: envelope.minX, y: min(old, new), width: envelope.width, height: abs(old - new)))
+        }
+        verticalEdge(from: previous.minX, to: next.minX)
+        verticalEdge(from: previous.maxX, to: next.maxX)
+        horizontalEdge(from: previous.minY, to: next.minY)
+        horizontalEdge(from: previous.maxY, to: next.maxY)
+    }
+
+    private func invalidateSelectionArea(_ area: CGRect) {
+        if !area.isEmpty { setNeedsDisplay(area.insetBy(dx: -1, dy: -1).integral) }
     }
 
     private func location(_ event: NSEvent) -> CGPoint {
