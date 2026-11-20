@@ -28,5 +28,7 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Luqri 使用你框选的屏幕区域进行文字识别或翻译。</string>
 </dict>
 </plist>

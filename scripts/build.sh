@@ -2,6 +2,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+if [[ $# -gt 1 || ( $# -eq 1 && $1 != --universal ) ]]; then
+    printf '用法：%s [--universal]\n' "$0" >&2
+    exit 2
+fi
+
 sdk="$(xcrun --sdk macosx --show-sdk-path)"
 platform="$(xcrun --sdk macosx --show-sdk-platform-path)"
 app="${LUQRI_APP_PATH:-$PWD/.build/Luqri.app}"
@@ -37,5 +42,5 @@ cp Luqri/Icons/*.svg "$app/Contents/Resources/Icons/"
 cp Luqri/LuqriAppIcon.icns "$app/Contents/Resources/"
 cp Luqri/Lucide-LICENSE.txt "$app/Contents/Resources/"
 codesign --force --sign - "$app"
-codesign --verify "$app"
+codesign --verify --strict --all-architectures "$app"
 printf '%s\n' "$app"

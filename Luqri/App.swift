@@ -5,6 +5,14 @@ import SwiftUI
 @main
 @MainActor
 enum LuqriApp {
+    static func workspaceActivationConfiguration() -> NSWorkspace.OpenConfiguration {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        configuration.allowsRunningApplicationSubstitution = false
+        return configuration
+    }
+
     static func loadAppIcon(size: NSSize) -> NSImage? {
         guard let iconFile = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
               let url = Bundle.main.url(forResource: iconFile, withExtension: nil),
@@ -537,11 +545,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     private func requestWorkspaceActivation() {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        configuration.addsToRecentItems = false
-        configuration.allowsRunningApplicationSubstitution = false
-        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+        NSWorkspace.shared.openApplication(
+            at: Bundle.main.bundleURL, configuration: LuqriApp.workspaceActivationConfiguration()
+        )
     }
 
     private func settingsFrame(for window: NSWindow, screen: CGRect, visible: CGRect) -> CGRect {

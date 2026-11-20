@@ -162,11 +162,9 @@ private final class SelectionOverlay {
         // A global shortcut can arrive while a different app owns the system cursor.
         activationTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            configuration.addsToRecentItems = false
-            configuration.allowsRunningApplicationSubstitution = false
-            _ = try? await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+            _ = try? await NSWorkspace.shared.openApplication(
+                at: Bundle.main.bundleURL, configuration: LuqriApp.workspaceActivationConfiguration()
+            )
             guard !Task.isCancelled, let self else { return }
             self.activationTask = nil
             self.show()
