@@ -495,9 +495,6 @@ struct SettingsView: View {
                     ForEach(OCRProvider.allCases) { Text($0.title).tag($0) }
                 }
                 if ocrProvider == .volcengine {
-                    Text("所选截图将发送至火山引擎，使用下方保存的密钥。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     Link("多语种 OCR 开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1")!)
                 }
             }
@@ -506,9 +503,11 @@ struct SettingsView: View {
                 credentialField("Access Key ID", text: $accessKey)
                 credentialField("Secret Access Key", text: $secretKey)
                 HStack {
-                    Text(status.isEmpty ? "密钥仅保存在本机" : status)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if !status.isEmpty {
+                        Text(status)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     if hasCredentials {
                         Button("移除密钥", role: .destructive, action: removeCredentials)
@@ -533,9 +532,11 @@ struct SettingsView: View {
                     }
                 }
                 HStack {
-                    Text(shortcuts.message ?? (shortcuts.recording == nil ? "点击快捷键按钮修改" : "按 Esc 取消录制"))
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
+                    if let message = shortcuts.message ?? (shortcuts.recording == nil ? nil : "按 Esc 取消录制") {
+                        Text(message)
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
                     Spacer()
                     Button("恢复默认") { shortcuts.restoreDefaults() }
                 }
