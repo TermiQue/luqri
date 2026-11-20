@@ -7,6 +7,11 @@ import SwiftUI
 enum LuqriApp {
     static func main() {
         let application = NSApplication.shared
+        if let iconFile = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
+           let url = Bundle.main.url(forResource: iconFile, withExtension: nil),
+           let icon = NSImage(contentsOf: url) {
+            application.applicationIconImage = icon
+        }
         let delegate = AppController()
         application.delegate = delegate
         application.setActivationPolicy(.accessory)
@@ -108,7 +113,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func buildMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = LucideIcon.menuImage("languages", size: 18)
+        let icon = NSApp.applicationIconImage.copy() as? NSImage
+        icon?.size = NSSize(width: 18, height: 18)
+        item.button?.image = icon
         item.button?.toolTip = "Luqri"
         item.button?.setAccessibilityLabel("Luqri")
         let menu = NSMenu()

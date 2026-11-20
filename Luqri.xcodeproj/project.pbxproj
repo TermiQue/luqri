@@ -16,7 +16,7 @@
 		1A2B3C4D00000000000000CD /* Volcengine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000069 /* Volcengine.swift */; };
 		1A2B3C4D00000000000000CE /* Icons in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006A /* Icons */; };
 		1A2B3C4D00000000000000CF /* Lucide-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */; };
-		1A2B3C4D00000000000000D2 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006F /* AppIcon.icns */; };
+		1A2B3C4D00000000000000D2 /* LuqriAppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006F /* LuqriAppIcon.icns */; };
 		1A2B3C4D00000000000000D3 /* ShortcutActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000070 /* ShortcutActions.swift */; };
 /* End PBXBuildFile section */
 
@@ -32,7 +32,7 @@
 		1A2B3C4D000000000000006A /* Icons */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Icons"; sourceTree = "<group>"; };
 		1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Lucide-LICENSE.txt"; sourceTree = "<group>"; };
 		1A2B3C4D000000000000006C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info.plist"; sourceTree = "<group>"; };
-		1A2B3C4D000000000000006F /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		1A2B3C4D000000000000006F /* LuqriAppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = LuqriAppIcon.icns; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000070 /* ShortcutActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutActions.swift; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000005 /* Luqri.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Luqri.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -67,7 +67,7 @@
 				1A2B3C4D000000000000006A /* Icons */,
 				1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */,
 				1A2B3C4D000000000000006C /* Info.plist */,
-				1A2B3C4D000000000000006F /* AppIcon.icns */,
+				1A2B3C4D000000000000006F /* LuqriAppIcon.icns */,
 			);
 			path = Luqri;
 			sourceTree = "<group>";
@@ -120,7 +120,7 @@
 			files = (
 				1A2B3C4D00000000000000CE /* Icons in Resources */,
 				1A2B3C4D00000000000000CF /* Lucide-LICENSE.txt in Resources */,
-				1A2B3C4D00000000000000D2 /* AppIcon.icns in Resources */,
+				1A2B3C4D00000000000000D2 /* LuqriAppIcon.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
