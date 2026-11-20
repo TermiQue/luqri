@@ -113,7 +113,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        if permissionPrompt?.permission.isGranted == true { closePermissionPrompt() }
         if let window = settingsAwaitingFocus {
             settingsAwaitingFocus = nil
             window.makeKeyAndOrderFront(nil)

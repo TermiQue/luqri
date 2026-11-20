@@ -7,8 +7,13 @@ enum AppPermission: CaseIterable {
 
     var title: String {
         switch self {
-        case .accessibility: "辅助功能"
-        case .screenRecording: "录屏与系统录音"
+        case .accessibility:
+            if #available(macOS 27.3, *) { return "辅助功能" }
+            if #available(macOS 27.0, *) { return "设备控制和数据访问" }
+            return "辅助功能"
+        case .screenRecording:
+            if #available(macOS 27.0, *) { return "录屏与系统录音" }
+            return "屏幕与系统音频录制"
         }
     }
 
@@ -53,11 +58,11 @@ final class PermissionPrompt: NSObject, NSWindowDelegate {
         alert.icon = artwork
         switch permission {
         case .accessibility:
-            alert.messageText = "划词翻译需要辅助功能权限"
+            alert.messageText = "划词翻译需要「\(permission.title)」权限"
             alert.informativeText = "在系统设置中允许 Luqri 读取选中文字后，请重新触发划词翻译。"
         case .screenRecording:
-            alert.messageText = "截图需要录屏权限"
-            alert.informativeText = "在系统设置中允许 Luqri 录屏后，请重新截图。若 macOS 要求退出，请重新打开 Luqri。"
+            alert.messageText = "截图需要「\(permission.title)」权限"
+            alert.informativeText = "请将 Luqri 加入上方「\(permission.title)」列表并开启开关。「仅系统录音」无法用于截图。若 macOS 要求退出，请重新打开 Luqri。"
         }
         let authorize = alert.addButton(withTitle: "前往授权")
         authorize.target = self
@@ -131,7 +136,12 @@ final class PermissionPrompt: NSObject, NSWindowDelegate {
 
     private func showDragPanel(at settingsFrame: CGRect?, fallbackScreen: NSScreen?) {
         placementTask = nil
-        let dragView = PermissionDragView(bundle: Bundle.main.bundleURL, icon: alert.icon ?? NSApp.applicationIconImage)
+        let dragView = PermissionDragView(bundle: Bundle.main.bundleURL, icon: alert.icon ?? NSApp.applicationIconImage,
+                                          permission: permission) { [weak self] point in
+            guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences",
+                  let frame = Self.systemSettingsFrame() ?? settingsFrame, frame.contains(point) else { return }
+            self?.dismiss()
+        }
         let padding: CGFloat = 10
         let content = NSView(frame: CGRect(x: 0, y: 0, width: dragView.bounds.width + padding * 2,
                                            height: dragView.bounds.height + padding * 2))
@@ -161,8 +171,7 @@ final class PermissionPrompt: NSObject, NSWindowDelegate {
     private static func dragPanelOrigin(size: CGSize, settingsFrame: CGRect?, visible: CGRect) -> CGPoint {
         let margin: CGFloat = 8
         let x = (settingsFrame?.midX ?? visible.midX) - size.width / 2
-        let below = (settingsFrame?.minY ?? visible.minY) - size.height - margin
-        let y = below >= visible.minY + margin ? below : (settingsFrame?.minY ?? visible.minY) + margin
+        let y = (settingsFrame?.minY ?? visible.minY) + margin
         return CGPoint(
             x: min(max(x, visible.minX + margin), visible.maxX - size.width - margin),
             y: min(max(y, visible.minY + margin), visible.maxY - size.height - margin)
@@ -188,24 +197,30 @@ final class PermissionPrompt: NSObject, NSWindowDelegate {
 private final class PermissionDragView: NSView, NSDraggingSource {
     private let bundle: URL
     private let icon: NSImage
+    private let onAcceptedDrop: (NSPoint) -> Void
 
-    init(bundle: URL, icon: NSImage) {
+    init(bundle: URL, icon: NSImage, permission: AppPermission, onAcceptedDrop: @escaping (NSPoint) -> Void) {
         self.bundle = bundle
         self.icon = icon
-        super.init(frame: CGRect(x: 0, y: 0, width: 216, height: 38))
+        self.onAcceptedDrop = onAcceptedDrop
+        super.init(frame: CGRect(x: 0, y: 0, width: 292, height: 50))
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.cgColor
-        let preview = NSImageView(frame: CGRect(x: 8, y: 7, width: 24, height: 24))
+        let preview = NSImageView(frame: CGRect(x: 8, y: 13, width: 24, height: 24))
         preview.image = icon
         preview.imageScaling = .scaleProportionallyUpOrDown
         addSubview(preview)
-        let caption = NSTextField(labelWithString: "拖动 Luqri 到权限列表")
-        caption.font = .systemFont(ofSize: 12)
-        caption.sizeToFit()
-        caption.setFrameOrigin(CGPoint(x: 40, y: (bounds.height - caption.frame.height) / 2))
+        let note = permission == .screenRecording ? "请选择上方列表，避开「仅系统录音」" : "添加后请开启 Luqri 的开关"
+        let caption = NSTextField(wrappingLabelWithString: "拖到「\(permission.title)」\n\(note)")
+        caption.font = .systemFont(ofSize: 11)
+        caption.frame = CGRect(x: 40, y: 6, width: 222, height: 34)
         addSubview(caption)
+        let arrow = NSImageView(frame: CGRect(x: 266, y: 17, width: 16, height: 16))
+        arrow.image = LucideIcon.menuImage("arrow-up", size: 16)
+        arrow.contentTintColor = .controlAccentColor
+        addSubview(arrow)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -227,5 +242,16 @@ private final class PermissionDragView: NSView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         .copy
+    }
+
+    func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+        window?.ignoresMouseEvents = true
+        window?.alphaValue = 0
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        window?.ignoresMouseEvents = false
+        window?.alphaValue = 1
+        if operation.contains(.copy) { onAcceptedDrop(screenPoint) }
     }
 }
