@@ -556,7 +556,7 @@ enum Clipboard {
             guard !Task.isCancelled else { return nil }
         }
         guard !Task.isCancelled, !IsSecureEventInputEnabled(),
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, CGPreflightPostEventAccess(),
+              let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier == pid, CGPreflightPostEventAccess(),
               let source = CGEventSource(stateID: .privateState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: false) else { return nil }
@@ -564,6 +564,7 @@ enum Clipboard {
         let pasteboard = NSPasteboard.general
         if #available(macOS 15.4, *), pasteboard.accessBehavior == .alwaysDeny { return nil }
         guard let snapshot = PasteboardSnapshot(pasteboard) else { return nil }
+        let usesSessionCopy = app.bundleIdentifier == "com.tencent.qq"
 
         // Once the key has been sent, finish restoring the clipboard even if the
         // caller cancels the translation or starts a different command.
@@ -573,10 +574,18 @@ enum Clipboard {
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return nil }
             down.flags = .maskCommand
             up.flags = .maskCommand
-            down.postToPid(pid)
-            up.postToPid(pid)
+            if usesSessionCopy {
+                // QQ's message view is hosted in a separate renderer. Route the
+                // shortcut through the frontmost window's normal keyboard path.
+                down.post(tap: .cgSessionEventTap)
+                up.post(tap: .cgSessionEventTap)
+            } else {
+                down.postToPid(pid)
+                up.postToPid(pid)
+            }
 
-            let deadline = ContinuousClock.now + .milliseconds(350)
+            let deadline = ContinuousClock.now + .milliseconds(usesSessionCopy ? 600 : 350)
+            var observedCount: Int?
             while ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(15))
                 let count = pasteboard.changeCount
@@ -585,15 +594,40 @@ enum Clipboard {
                 if count == snapshot.changeCount { continue }
                 guard count == snapshot.changeCount + 1 else { return nil }
                 guard let types = pasteboard.types, !types.isEmpty else { continue }
-                let copied = types.contains(concealed) || types.contains(.fileURL)
-                    ? nil : pasteboard.string(forType: .string)
+                guard !types.contains(concealed) else { return nil }
+                observedCount = count
+                let copied = selectionText(from: pasteboard, types: types, acceptsRichText: usesSessionCopy)
+                if usesSessionCopy, copied == nil { continue }
                 guard snapshot.restore(to: pasteboard, replacing: count) else { return nil }
-                return copied.flatMap { $0.hasNonWhitespace ? $0 : nil }
+                return copied
+            }
+            if let observedCount, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+               !IsSecureEventInputEnabled() {
+                _ = snapshot.restore(to: pasteboard, replacing: observedCount)
             }
             return nil
         }
         selectionCopy = copy
         return await copy.value
+    }
+
+    private static func selectionText(
+        from pasteboard: NSPasteboard, types: [NSPasteboard.PasteboardType], acceptsRichText: Bool
+    ) -> String? {
+        if !acceptsRichText {
+            guard !types.contains(.fileURL),
+                  let text = pasteboard.string(forType: .string), text.hasNonWhitespace else { return nil }
+            return text
+        }
+        let parts = (pasteboard.pasteboardItems ?? []).compactMap { item -> String? in
+            guard !item.types.contains(.fileURL) else { return nil }
+            if let text = item.string(forType: .string), text.hasNonWhitespace { return text }
+            guard let rtf = item.data(forType: .rtf), rtf.count <= 1024 * 1024,
+                  let text = NSAttributedString(rtf: rtf, documentAttributes: nil)?.string,
+                  text.hasNonWhitespace else { return nil }
+            return text
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     static func credentialText(from pasteboard: NSPasteboard = .general) -> String? {
