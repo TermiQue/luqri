@@ -73,7 +73,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             return nil
         }
         let window = event.window ?? NSApp.keyWindow
-        if window != nil, window === permissionPrompt?.window, Shortcut.isEscapeEvent(event) {
+        if permissionPrompt?.containsWindow(window) == true, Shortcut.isEscapeEvent(event) {
             if !event.isARepeat { permissionPrompt?.dismiss() }
             return nil
         }
@@ -220,14 +220,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     private func canClose(_ window: NSWindow?) -> Bool {
         guard let window, window.attachedSheet == nil else { return false }
-        return window === settingsWindow || window === translationPanel || window === permissionPrompt?.window
+        return window === settingsWindow || window === translationPanel || permissionPrompt?.containsWindow(window) == true
     }
 
     private func closeWindow(_ window: NSWindow?) {
         guard let window else { return }
         if window === translationPanel { closeTranslation() }
         else if window === settingsWindow { window.performClose(nil) }
-        else if window === permissionPrompt?.window { permissionPrompt?.dismiss() }
+        else if permissionPrompt?.containsWindow(window) == true { permissionPrompt?.dismiss() }
     }
 
     @objc private func closeFrontWindow() { closeWindow(NSApp.keyWindow) }

@@ -26,19 +26,22 @@ enum AppPermission: CaseIterable {
         }
     }
 
-    func openSettings() {
+    @discardableResult
+    func openSettings() -> Bool {
         let anchor = self == .accessibility ? "Privacy_Accessibility" : "Privacy_ScreenCapture"
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else { return }
-        NSWorkspace.shared.open(url)
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else { return false }
+        return NSWorkspace.shared.open(url)
     }
 }
 
 @MainActor
-final class PermissionPrompt: NSObject {
+final class PermissionPrompt: NSObject, NSWindowDelegate {
     let permission: AppPermission
     let alert = NSAlert()
     var onLater: (() -> Void)?
     var onDismiss: (() -> Void)?
+    private var dragPanel: NSPanel?
+    private var placementTask: Task<Void, Never>?
 
     var window: NSWindow { alert.window }
 
@@ -51,10 +54,10 @@ final class PermissionPrompt: NSObject {
         switch permission {
         case .accessibility:
             alert.messageText = "划词翻译需要辅助功能权限"
-            alert.informativeText = "将 Luqri 拖进辅助功能列表并开启权限，然后重新触发划词翻译。"
+            alert.informativeText = "在系统设置中允许 Luqri 读取选中文字后，请重新触发划词翻译。"
         case .screenRecording:
             alert.messageText = "截图需要录屏权限"
-            alert.informativeText = "将 Luqri 拖进录屏列表并开启权限，然后重新截图。若 macOS 要求退出，请重新打开 Luqri。"
+            alert.informativeText = "在系统设置中允许 Luqri 录屏后，请重新截图。若 macOS 要求退出，请重新打开 Luqri。"
         }
         let authorize = alert.addButton(withTitle: "前往授权")
         authorize.target = self
@@ -63,7 +66,6 @@ final class PermissionPrompt: NSObject {
         later.target = self
         later.action = #selector(dismiss)
         later.keyEquivalent = "\u{1b}"
-        alert.accessoryView = PermissionDragView(bundle: bundle, icon: artwork)
         alert.layout()
         window.isReleasedWhenClosed = false
         window.level = .floating
@@ -73,6 +75,11 @@ final class PermissionPrompt: NSObject {
     }
 
     func present() {
+        if let dragPanel {
+            dragPanel.orderFrontRegardless()
+            return
+        }
+        guard placementTask == nil else { return }
         if !window.isVisible { window.center() }
         window.orderFrontRegardless()
         NSApp.activate()
@@ -80,20 +87,100 @@ final class PermissionPrompt: NSObject {
     }
 
     func close() {
+        placementTask?.cancel()
+        placementTask = nil
+        dragPanel?.delegate = nil
+        dragPanel?.orderOut(nil)
+        dragPanel = nil
         window.orderOut(nil)
     }
 
+    func containsWindow(_ candidate: NSWindow?) -> Bool {
+        guard let candidate else { return false }
+        return candidate === window || candidate === dragPanel
+    }
+
     @objc func dismiss() {
+        let fallback = window.isVisible ? onLater : nil
         close()
         onDismiss?()
-        onLater?()
+        fallback?()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if (notification.object as? NSWindow) === dragPanel { dismiss() }
     }
 
     @objc private func openSettings() {
-        if let frame = window.screen?.visibleFrame {
-            window.setFrameOrigin(CGPoint(x: frame.minX + 20, y: window.frame.minY))
+        let screen = window.screen
+        guard permission.openSettings() else { return }
+        window.orderOut(nil)
+        placementTask = Task { @MainActor [weak self] in
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, !Task.isCancelled else { return }
+                if let frame = Self.systemSettingsFrame() {
+                    self.showDragPanel(at: frame, fallbackScreen: screen)
+                    return
+                }
+            }
+            guard !Task.isCancelled else { return }
+            self?.showDragPanel(at: nil, fallbackScreen: screen)
         }
-        permission.openSettings()
+    }
+
+    private func showDragPanel(at settingsFrame: CGRect?, fallbackScreen: NSScreen?) {
+        placementTask = nil
+        let dragView = PermissionDragView(bundle: Bundle.main.bundleURL, icon: alert.icon ?? NSApp.applicationIconImage)
+        let padding: CGFloat = 10
+        let content = NSView(frame: CGRect(x: 0, y: 0, width: dragView.bounds.width + padding * 2,
+                                           height: dragView.bounds.height + padding * 2))
+        dragView.setFrameOrigin(CGPoint(x: padding, y: padding))
+        content.addSubview(dragView)
+        let panel = NSPanel(contentRect: content.bounds, styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.title = "拖动 Luqri 授权"
+        panel.titleVisibility = .hidden
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.level = .floating
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        panel.contentView = content
+        panel.delegate = self
+        let targetScreen = settingsFrame.flatMap { frame in
+            NSScreen.screens.first { $0.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) }
+        }
+        if let visible = (targetScreen ?? fallbackScreen ?? NSScreen.main)?.visibleFrame {
+            panel.setFrameOrigin(Self.dragPanelOrigin(size: panel.frame.size, settingsFrame: settingsFrame, visible: visible))
+        } else {
+            panel.center()
+        }
+        dragPanel = panel
+        panel.orderFrontRegardless()
+    }
+
+    private static func dragPanelOrigin(size: CGSize, settingsFrame: CGRect?, visible: CGRect) -> CGPoint {
+        let margin: CGFloat = 8
+        let x = (settingsFrame?.midX ?? visible.midX) - size.width / 2
+        let below = (settingsFrame?.minY ?? visible.minY) - size.height - margin
+        let y = below >= visible.minY + margin ? below : (settingsFrame?.minY ?? visible.minY) + margin
+        return CGPoint(
+            x: min(max(x, visible.minX + margin), visible.maxX - size.width - margin),
+            y: min(max(y, visible.minY + margin), visible.maxY - size.height - margin)
+        )
+    }
+
+    private static func systemSettingsFrame() -> CGRect? {
+        guard let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier == "com.apple.systempreferences",
+              let top = NSScreen.screens.first?.frame.maxY,
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        for info in windows {
+            guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier,
+                  (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds), rect.width >= 300, rect.height >= 300 else { continue }
+            return CGRect(x: rect.minX, y: top - rect.maxY, width: rect.width, height: rect.height)
+        }
+        return nil
     }
 }
 
