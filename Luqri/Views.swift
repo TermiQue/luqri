@@ -518,10 +518,10 @@ struct SettingsView: View {
                         HStack(spacing: 10) {
                             Text(provider.title)
                             if provider == .volcengine, model.enabledProviders.contains(provider) {
-                                Link("开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!)
-                                    .font(.caption)
-                                    .buttonStyle(.borderless)
-                                    .accessibilityLabel("机器翻译开通与计费")
+                                billingLink(
+                                    "机器翻译开通与计费",
+                                    destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!
+                                )
                             }
                         }
                     }
@@ -529,17 +529,19 @@ struct SettingsView: View {
             }
 
             Section("OCR 服务") {
-                LabeledContent("识别服务") {
+                LabeledContent {
+                    Picker("识别服务", selection: $ocrProvider) {
+                        ForEach(OCRProvider.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                } label: {
                     HStack(spacing: 10) {
-                        Picker("识别服务", selection: $ocrProvider) {
-                            ForEach(OCRProvider.allCases) { Text($0.title).tag($0) }
-                        }
-                        .labelsHidden()
+                        Text("识别服务")
                         if ocrProvider == .volcengine {
-                            Link("开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1")!)
-                                .font(.caption)
-                                .buttonStyle(.borderless)
-                                .accessibilityLabel("多语种 OCR 开通与计费")
+                            billingLink(
+                                "多语种 OCR 开通与计费",
+                                destination: URL(string: "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1")!
+                            )
                         }
                     }
                 }
@@ -608,6 +610,17 @@ struct SettingsView: View {
                 status = error.localizedDescription
             }
         }
+    }
+
+    private func billingLink(_ label: String, destination: URL) -> some View {
+        Link(destination: destination) {
+            Text("开通与计费")
+                .font(.caption)
+                .underline()
+                .foregroundStyle(Color.accentColor)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(label)
     }
 
     private func credentialField(_ title: String, text: Binding<String>) -> some View {
