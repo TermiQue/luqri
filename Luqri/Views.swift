@@ -119,6 +119,8 @@ private struct PanelButtonStyle: ButtonStyle {
 struct TranslationView: View {
     static let preferredWidth: CGFloat = 420
     static let cornerRadius: CGFloat = 13
+    private static let windowPadding: CGFloat = 12
+    private static let editorPadding: CGFloat = 8
 
     @State private var editorFocused = false
     @State private var pinned = false
@@ -129,6 +131,7 @@ struct TranslationView: View {
     @State private var showEmptyClipboardHint = false
 
     @Bindable var model: TranslationModel
+    let availableHeight: CGFloat
     let focusEditor: () -> Void
     let close: () -> Void
     let openSettings: () -> Void
@@ -148,9 +151,17 @@ struct TranslationView: View {
     }
 
     var body: some View {
+        let providers = model.enabledProviders
+        let editorHeight = TranslationEditor.fittingHeight(
+            for: model.isLoadingInput ? "" : model.text,
+            width: Self.preferredWidth - 2 * (Self.windowPadding + Self.editorPadding),
+            maximumHeight: min(TranslationEditor.maximumHeight, availableHeight * 0.3)
+        )
+        let expandedCount = hasText ? providers.filter { !collapsedProviders.contains($0) }.count : 0
+        let resultHeight = resultHeightLimit(editorHeight: editorHeight, providers: providers.count, expanded: expandedCount)
         VStack(alignment: .leading, spacing: 8) {
             header
-            editor
+            editor(height: editorHeight)
             if let error = speech?.error {
                 Text(error)
                     .font(.caption)
@@ -160,15 +171,15 @@ struct TranslationView: View {
             if !hasText && showEmptyClipboardHint {
                 clipboardHint
             }
-            if model.enabledProviders.isEmpty {
+            if providers.isEmpty {
                 notice("请先开启翻译服务", action: "打开设置", perform: openSettings)
             } else {
-                ForEach(model.enabledProviders) { provider in
-                    serviceRow(provider)
+                ForEach(providers) { provider in
+                    serviceRow(provider, resultHeight: resultHeight)
                 }
             }
         }
-        .padding(12)
+        .padding(Self.windowPadding)
         .frame(width: Self.preferredWidth)
         .fixedSize(horizontal: false, vertical: true)
         .background(Color(nsColor: .textBackgroundColor))
@@ -204,6 +215,15 @@ struct TranslationView: View {
         }
     }
 
+    private func resultHeightLimit(editorHeight: CGFloat, providers: Int, expanded: Int) -> CGFloat {
+        let visibleResults = CGFloat(max(1, expanded))
+        // Reserve the header, input controls, service headers, and result buttons.
+        let controlsHeight = 110 + 42 * CGFloat(providers) + 50 * visibleResults
+        let speechErrorHeight: CGFloat = speech?.error == nil ? 0 : 32
+        let remaining = availableHeight - editorHeight - controlsHeight - speechErrorHeight
+        return max(48, min(expanded > 1 ? 160 : 220, remaining / visibleResults))
+    }
+
     private func notice(_ message: String, action: String, perform: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
             Text(message)
@@ -226,7 +246,7 @@ struct TranslationView: View {
     private var header: some View {
         HStack(spacing: 4) {
             Text("翻译")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.primary)
             Spacer()
             iconButton("pin", label: pinned ? "取消置顶" : "置顶浮窗") {
@@ -242,7 +262,7 @@ struct TranslationView: View {
         .foregroundStyle(.secondary)
     }
 
-    private var editor: some View {
+    private func editor(height: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Group {
                 if model.isLoadingInput {
@@ -254,8 +274,8 @@ struct TranslationView: View {
                     TranslationEditor(text: editorText, inputError: model.inputError) { editorFocused = $0 }
                 }
             }
-            .font(.system(size: 14))
-            .frame(height: TranslationEditor.height)
+            .font(.system(size: TranslationEditor.fontSize))
+            .frame(height: height)
 
             HStack(spacing: 3) {
                 speechButton(.source, text: model.text, language: model.source)
@@ -280,7 +300,7 @@ struct TranslationView: View {
                 .disabled(!hasText || model.enabledProviders.isEmpty)
             }
         }
-        .padding(8)
+        .padding(Self.editorPadding)
         .background(card)
         .overlay {
             RoundedRectangle(cornerRadius: 9)
@@ -301,7 +321,7 @@ struct TranslationView: View {
         .background(card)
     }
 
-    private func serviceRow(_ provider: Provider) -> some View {
+    private func serviceRow(_ provider: Provider, resultHeight: CGFloat) -> some View {
         let output = model.output(for: provider)
         let expanded = !collapsedProviders.contains(provider) && hasText
         return VStack(alignment: .leading, spacing: 0) {
@@ -317,7 +337,7 @@ struct TranslationView: View {
                     LucideIcon(name: provider == .apple ? "languages" : "flame", size: 14)
                         .foregroundStyle(Color.accentColor)
                     Text(provider.title)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                     Spacer()
                     LucideIcon(name: expanded ? "chevron-down" : "chevron-right", size: 13)
                         .foregroundStyle(.secondary)
@@ -330,7 +350,7 @@ struct TranslationView: View {
             .accessibilityValue(expanded ? "已展开" : "已折叠")
             if expanded {
                 Divider().padding(.horizontal, 10)
-                serviceOutput(output, for: provider)
+                serviceOutput(output, for: provider, resultHeight: resultHeight)
             }
         }
         .background(card)
@@ -340,15 +360,15 @@ struct TranslationView: View {
         }
     }
 
-    private func serviceOutput(_ output: TranslationOutput, for provider: Provider) -> some View {
+    private func serviceOutput(_ output: TranslationOutput, for provider: Provider, resultHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             switch output {
             case .translating:
                 LoadingIndicator(title: "正在翻译")
             case .failed(let error):
-                readableOutput(error)
+                readableOutput(error, maximumHeight: resultHeight)
             case .translated(let text, let language):
-                readableOutput(text)
+                readableOutput(text, maximumHeight: resultHeight)
                 let copied = copiedResult == provider
                 HStack(spacing: 3) {
                     speechButton(.translation(provider), text: text, language: language)
@@ -361,13 +381,13 @@ struct TranslationView: View {
                 Text("按 ⌘↩ 翻译").foregroundStyle(.secondary)
             }
         }
-        .font(.system(size: 13))
+        .font(.system(size: 14))
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func readableOutput(_ text: String) -> some View {
+    private func readableOutput(_ text: String, maximumHeight: CGFloat) -> some View {
         ViewThatFits(in: .vertical) {
             Text(text)
                 .fixedSize(horizontal: false, vertical: true)
@@ -378,7 +398,7 @@ struct TranslationView: View {
                     .textSelection(.enabled)
             }
         }
-        .frame(maxHeight: model.enabledProviders.count > 1 ? 110 : 146, alignment: .topLeading)
+        .frame(maxHeight: maximumHeight, alignment: .topLeading)
     }
 
     private func iconButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
@@ -420,11 +440,28 @@ struct TranslationView: View {
 }
 
 private struct TranslationEditor: NSViewRepresentable {
-    static let height: CGFloat = 64
+    static let fontSize: CGFloat = 15
+    static let minimumHeight: CGFloat = 72
+    static let maximumHeight: CGFloat = 176
+    private static let linePadding: CGFloat = 5
+    private static let verticalInset: CGFloat = 1
 
     @Binding var text: String
     let inputError: String?
     let onFocusChange: (Bool) -> Void
+
+    static func fittingHeight(for text: String, width: CGFloat, maximumHeight: CGFloat) -> CGFloat {
+        guard !text.isEmpty else { return minimumHeight }
+        let measuredText = text.last?.isNewline == true ? text + " " : text
+        let bounds = (measuredText as NSString).boundingRect(
+            // Measure far enough to include the line that crosses the viewport limit.
+            with: CGSize(width: max(1, width - 2 * linePadding), height: maximumHeight + 2 * fontSize),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: fontSize)],
+            context: nil
+        )
+        return max(minimumHeight, min(maximumHeight, ceil(bounds.height) + 2 * verticalInset))
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -437,16 +474,17 @@ private struct TranslationEditor: NSViewRepresentable {
         editor.autoresizingMask = [.width]
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
-        editor.minSize = NSSize(width: 0, height: Self.height)
+        editor.minSize = NSSize(width: 0, height: Self.minimumHeight)
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         editor.textContainer?.widthTracksTextView = true
-        editor.textContainerInset = NSSize(width: 0, height: 1)
+        editor.textContainer?.lineFragmentPadding = Self.linePadding
+        editor.textContainerInset = NSSize(width: 0, height: Self.verticalInset)
         editor.drawsBackground = false
         editor.focusRingType = .none
         editor.isRichText = false
         editor.allowsUndo = true
-        editor.font = .systemFont(ofSize: 14)
+        editor.font = .systemFont(ofSize: Self.fontSize)
         editor.textColor = .labelColor
         editor.insertionPointColor = .labelColor
         editor.setAccessibilityLabel("原文")
@@ -542,7 +580,7 @@ private struct TranslationEditor: NSViewRepresentable {
             let leading = origin.x + (textContainer?.lineFragmentPadding ?? 0)
             let rect = CGRect(x: leading, y: origin.y, width: max(0, bounds.width - leading * 2), height: bounds.height - origin.y)
             (placeholder as NSString).draw(with: rect, options: .usesLineFragmentOrigin, attributes: [
-                .font: font ?? NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.secondaryLabelColor
+                .font: font ?? NSFont.systemFont(ofSize: TranslationEditor.fontSize), .foregroundColor: NSColor.secondaryLabelColor
             ])
         }
     }

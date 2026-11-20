@@ -393,7 +393,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             return true
         }
         let view = TranslationView(
-            model: model, focusEditor: { [weak panel] in panel?.focusSourceEditor() },
+            model: model, availableHeight: screen?.visibleFrame.insetBy(dx: 8, dy: 8).height ?? .greatestFiniteMagnitude,
+            focusEditor: { [weak panel] in panel?.focusSourceEditor() },
             close: { [weak self] in self?.closeTranslation() },
             openSettings: { [weak self] in self?.showSettings() },
             setPinned: { [weak self] pinned in self?.translationPinned = pinned },
