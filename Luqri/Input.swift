@@ -317,66 +317,221 @@ final class GlobalShortcuts {
 enum SelectedText {
     static func read(from pid: pid_t, at point: CGPoint) async -> String? {
         guard !Task.isCancelled else { return nil }
-        let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 0.15)
-        let deadline = ContinuousClock.now + .milliseconds(450)
-        var visited: [AXUIElement] = []
-
-        func search(from start: AXUIElement?) -> String? {
-            var current = start
-            for _ in 0..<12 {
-                guard let node = current, !Task.isCancelled, ContinuousClock.now < deadline,
-                      !visited.contains(where: { CFEqual($0, node) }) else { break }
-                visited.append(node)
-                if attribute(node, kAXSubroleAttribute) as? String == kAXSecureTextFieldSubrole { return nil }
-                if let text = textSelection(in: node) { return text }
-                current = element(node, kAXParentAttribute)
-            }
-            return nil
-        }
-
-        if let text = search(from: element(app, kAXFocusedUIElementAttribute)) { return text }
-        guard !Task.isCancelled, ContinuousClock.now < deadline else { return nil }
-        var hit: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success else { return nil }
-        return search(from: hit)
+        var query = SelectionQuery(pid: pid)
+        return query.read(at: point)
     }
+}
 
-    private static func textSelection(in element: AXUIElement) -> String? {
-        if let text = attribute(element, kAXSelectedTextAttribute) as? String,
-           text.hasNonWhitespace { return text }
+private struct SelectionQuery {
+    private static let messageTimeout: Float = 0.15
+    private static let selectionAttributes = [
+        kAXSelectedTextAttribute, kAXSelectedTextRangeAttribute, kAXSelectedTextRangesAttribute, "AXSelectedTextMarkerRange"
+    ]
 
-        if let range = attribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(range) == AXValueGetTypeID() {
-            var selection = CFRange()
-            if AXValueGetValue(range as! AXValue, .cfRange, &selection), selection.length > 0,
-               let text = string(in: element, attribute: kAXStringForRangeParameterizedAttribute, range: range) {
-                return text
+    let pid: pid_t
+    private let deadline = ContinuousClock.now + .milliseconds(450)
+    private var visited: Set<AXUIElement> = []
+
+    init(pid: pid_t) { self.pid = pid }
+
+    private var canQuery: Bool { !Task.isCancelled && ContinuousClock.now < deadline }
+
+    mutating func read(at point: CGPoint) -> String? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, Self.messageTimeout)
+        let system = AXUIElementCreateSystemWide()
+        let focus = element(app, kAXFocusedUIElementAttribute)
+        if let focus {
+            guard !isSecure(focus) else { return nil }
+            visited.insert(focus)
+            if let text = textSelection(in: focus) { return text }
+        }
+
+        let systemFocus = element(system, kAXFocusedUIElementAttribute)
+        if let systemFocus, visited.insert(systemFocus).inserted {
+            guard !isSecure(systemFocus) else { return nil }
+            if let text = textSelection(in: systemFocus) { return text }
+        }
+
+        let hit = element(at: point, in: app) ?? element(at: point, in: system)
+        if let hit {
+            guard !isSecure(hit) else { return nil }
+            if visited.insert(hit).inserted, let text = textSelection(in: hit) { return text }
+        }
+
+        // Probe the hit path and focus path together, so an unrelated focus chain
+        // cannot use the whole time available for reading the pointer's selection.
+        var parents = [hit, focus, systemFocus].compactMap { $0 }.map { element($0, kAXParentAttribute) }
+        for _ in 0..<10 {
+            guard canQuery, parents.contains(where: { $0 != nil }) else { break }
+            for index in parents.indices {
+                guard let parent = parents[index], visited.insert(parent).inserted, !isSecure(parent) else {
+                    parents[index] = nil
+                    continue
+                }
+                if let text = textSelection(in: parent) { return text }
+                parents[index] = element(parent, kAXParentAttribute)
             }
         }
 
-        // Browser and rich-text engines can expose the selection as a text marker range.
-        if let range = attribute(element, "AXSelectedTextMarkerRange") {
-            return string(in: element, attribute: "AXStringForTextMarkerRange", range: range)
+        let window = element(app, kAXFocusedWindowAttribute)
+        if let window, let text = probe(element(window, kAXFocusedUIElementAttribute)) ?? probe(window) { return text }
+        for anchor in [focus, systemFocus, hit].compactMap({ $0 }) {
+            for peer in elements(anchor, kAXSharedTextUIElementsAttribute, limit: 6) {
+                if let text = probe(peer) { return text }
+            }
+        }
+        for anchor in [hit, window].compactMap({ $0 }) {
+            if let text = searchContents(of: anchor, at: point, depth: 3) { return text }
         }
         return nil
     }
 
-    private static func string(in element: AXUIElement, attribute: String, range: CFTypeRef) -> String? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(element, attribute as CFString, range, &value) == .success,
-              let text = value as? String, text.hasNonWhitespace else { return nil }
-        return text
+    private mutating func probe(_ element: AXUIElement?) -> String? {
+        guard canQuery, let element, visited.insert(element).inserted, !isSecure(element) else { return nil }
+        return textSelection(in: element)
     }
 
-    private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    private mutating func searchContents(of parent: AXUIElement, at point: CGPoint, depth: Int) -> String? {
+        guard canQuery, depth > 0, !isSecure(parent) else { return nil }
+        var checked: Set<AXUIElement> = []
+        for name in [kAXContentsAttribute, kAXChildrenAttribute] {
+            for child in elements(parent, name, limit: 8)
+            where checked.insert(child).inserted && contains(point, in: child) {
+                if let text = probe(child) ?? searchContents(of: child, at: point, depth: depth - 1) { return text }
+            }
+        }
+        return nil
+    }
+
+    private func isSecure(_ element: AXUIElement) -> Bool {
+        attribute(element, kAXSubroleAttribute) as? String == kAXSecureTextFieldSubrole
+    }
+
+    private func textSelection(in element: AXUIElement) -> String? {
+        let selection = attributes(Self.selectionAttributes, in: element)
+        let direct = plainText(selection[0])
+        let reportedRanges = selection[2] as? [AnyObject] ?? []
+        let ranges = (reportedRanges.count <= 32 ? reportedRanges : []).compactMap { value in
+            selectedRange(value).map { (value, $0) }
+        }
+        if ranges.count > 1, let text = text(for: ranges, in: element) { return text }
+        if let direct, direct.hasNonWhitespace { return direct }
+
+        // Some document views publish their selection only as a text marker range.
+        if let marker = selection[3], let text = plainText(parameter(element, "AXStringForTextMarkerRange", marker)),
+           text.hasNonWhitespace { return text }
+        if ranges.count == 1, let text = text(for: ranges, in: element) { return text }
+        if let value = selection[1], let range = selectedRange(value) {
+            return text(for: [(value, range)], in: element)
+        }
+        return nil
+    }
+
+    private func text(for ranges: [(AnyObject, NSRange)], in element: AXUIElement) -> String? {
+        var storage: NSString?
+        var parts: [String] = []
+        for (value, range) in ranges {
+            let rangedText = plainText(parameter(element, kAXStringForRangeParameterizedAttribute, value))
+                ?? plainText(parameter(element, kAXAttributedStringForRangeParameterizedAttribute, value))
+            if let rangedText, !rangedText.isEmpty {
+                parts.append(rangedText)
+                continue
+            }
+
+            // Only slice AXValue when the element reports a real selection range.
+            if storage == nil { storage = plainText(attribute(element, kAXValueAttribute)).map { $0 as NSString } }
+            let end = NSMaxRange(range)
+            let lowSurrogates: ClosedRange<UInt16> = 0xDC00...0xDFFF
+            guard let storage, end <= storage.length,
+                  !lowSurrogates.contains(storage.character(at: range.location)),
+                  end == storage.length || !lowSurrogates.contains(storage.character(at: end)) else { return nil }
+            parts.append(storage.substring(with: range))
+        }
+        let result = parts.joined(separator: "\n")
+        return result.hasNonWhitespace ? result : nil
+    }
+
+    private func selectedRange(_ value: AnyObject) -> NSRange? {
+        guard let range: CFRange = unpack(value, type: .cfRange, into: CFRange()),
+              range.location >= 0, range.length > 0, range.location <= Int.max - range.length else { return nil }
+        return NSRange(location: range.location, length: range.length)
+    }
+
+    private func contains(_ point: CGPoint, in element: AXUIElement) -> Bool {
+        let geometry = attributes([kAXPositionAttribute, kAXSizeAttribute], in: element)
+        guard let origin = unpack(geometry[0], type: .cgPoint, into: CGPoint.zero),
+              let size = unpack(geometry[1], type: .cgSize, into: CGSize.zero) else { return false }
+        return CGRect(origin: origin, size: size).contains(point)
+    }
+
+    private func unpack<T>(_ value: AnyObject?, type: AXValueType, into initial: T) -> T? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var result = initial
+        let success = withUnsafeMutablePointer(to: &result) { AXValueGetValue(value as! AXValue, type, $0) }
+        return success ? result : nil
+    }
+
+    private func plainText(_ value: AnyObject?) -> String? {
+        (value as? String) ?? (value as? NSAttributedString)?.string
+    }
+
+    private func attributes(_ names: [String], in element: AXUIElement) -> [AnyObject?] {
+        var values: CFArray?
+        if canQuery,
+           AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &values) == .success,
+           let returned = values as? [AnyObject], returned.count == names.count {
+            return returned.map { value in
+                let type = CFGetTypeID(value)
+                if type == CFNullGetTypeID() || (type == AXValueGetTypeID() && AXValueGetType(value as! AXValue) == .axError) {
+                    return nil
+                }
+                return value
+            }
+        }
+        return names.map { attribute(element, $0) }
+    }
+
+    private func parameter(_ element: AXUIElement, _ name: String, _ argument: AnyObject) -> AnyObject? {
+        guard canQuery else { return nil }
+        var value: CFTypeRef?
+        let status = AXUIElementCopyParameterizedAttributeValue(element, name as CFString, argument, &value)
+        return status == .success ? value : nil
+    }
+
+    private func attribute(_ element: AXUIElement, _ name: String) -> AnyObject? {
+        guard canQuery else { return nil }
         var value: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(element, name as CFString, &value)
         return status == .success ? value : nil
     }
 
-    private static func element(_ element: AXUIElement, _ name: String) -> AXUIElement? {
-        guard let value = attribute(element, name), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        return (value as! AXUIElement)
+    private func element(_ object: AXUIElement, _ name: String) -> AXUIElement? {
+        ownedElement(attribute(object, name))
+    }
+
+    private func element(at point: CGPoint, in root: AXUIElement) -> AXUIElement? {
+        guard canQuery else { return nil }
+        var result: AXUIElement?
+        let status = AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &result)
+        return status == .success ? ownedElement(result) : nil
+    }
+
+    private func elements(_ object: AXUIElement, _ name: String, limit: Int) -> [AXUIElement] {
+        guard canQuery else { return [] }
+        var values: CFArray?
+        guard AXUIElementCopyAttributeValues(object, name as CFString, 0, limit, &values) == .success,
+              let values = values as? [AnyObject] else { return [] }
+        return values.compactMap { ownedElement($0) }
+    }
+
+    private func ownedElement(_ value: AnyObject?) -> AXUIElement? {
+        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        let element = value as! AXUIElement
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { return nil }
+        AXUIElementSetMessagingTimeout(element, Self.messageTimeout)
+        return element
     }
 }
 
