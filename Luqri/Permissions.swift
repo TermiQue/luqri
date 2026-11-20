@@ -59,7 +59,7 @@ final class PermissionPrompt: NSObject, NSWindowDelegate {
         switch permission {
         case .accessibility:
             alert.messageText = "划词翻译需要「\(permission.title)」权限"
-            alert.informativeText = "在系统设置中允许 Luqri 读取选中文字后，请重新触发划词翻译。"
+            alert.informativeText = "请在系统设置中拖入当前版本的 Luqri 并开启开关。若更新后列表里已有 Luqri，请先移除旧条目。授权后请重新触发划词翻译。"
         case .screenRecording:
             alert.messageText = "截图需要「\(permission.title)」权限"
             alert.informativeText = "请将 Luqri 加入上方「\(permission.title)」列表并开启开关。「仅系统录音」无法用于截图。若 macOS 要求退出，请重新打开 Luqri。"

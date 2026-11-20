@@ -117,7 +117,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             settingsAwaitingFocus = nil
             window.makeKeyAndOrderFront(nil)
         }
-        if translationPanel?.isKeyWindow == true { translationHasTakenFocus = true }
+        if let panel = translationPanel, !translationHasTakenFocus {
+            panel.makeKeyAndOrderFront(nil)
+            if panel.isKeyWindow { translationHasTakenFocus = true }
+        }
     }
 
     func applicationDidResignActive(_ notification: Notification) {
@@ -128,6 +131,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if translationPanel != nil, !translationHasTakenFocus { return false }
         guard let window = settingsWindow else { return true }
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
@@ -414,6 +418,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panel.orderFrontRegardless()
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
+        if !NSApp.isActive { requestWorkspaceActivation() }
     }
 
     private func translationFrame(contentSize: CGSize, screen: CGRect, visible: CGRect) -> CGRect {
@@ -521,13 +526,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if NSApp.isActive {
             if window.isKeyWindow { settingsAwaitingFocus = nil }
         } else {
-            // A status menu action may run while another application still owns activation.
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            configuration.addsToRecentItems = false
-            configuration.allowsRunningApplicationSubstitution = false
-            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+            requestWorkspaceActivation()
         }
+    }
+
+    private func requestWorkspaceActivation() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        configuration.allowsRunningApplicationSubstitution = false
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
     }
 
     private func settingsFrame(for window: NSWindow, screen: CGRect, visible: CGRect) -> CGRect {
