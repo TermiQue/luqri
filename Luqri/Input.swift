@@ -2,7 +2,6 @@ import AppKit
 import Carbon
 import Observation
 import ApplicationServices
-import OSLog
 
 enum Command: UInt32, CaseIterable {
     case translate = 1
@@ -552,106 +551,60 @@ enum Clipboard {
     static var text: String { NSPasteboard.general.string(forType: .string) ?? "" }
 
     static func copySelection(from pid: pid_t) async -> String? {
-        let tracing = QQSelectionTrace.isActive
         while let selectionCopy {
             _ = await selectionCopy.value
             guard !Task.isCancelled else { return nil }
         }
         guard !Task.isCancelled, !IsSecureEventInputEnabled(),
-              let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier == pid, CGPreflightPostEventAccess(),
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, CGPreflightPostEventAccess(),
               let source = CGEventSource(stateID: .privateState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: false) else {
-            if tracing { QQSelectionTrace.log("key event skipped (cancelled, focus, secure input or permission)") }
-            return nil
-        }
+              let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: false) else { return nil }
 
         let pasteboard = NSPasteboard.general
-        if #available(macOS 15.4, *), pasteboard.accessBehavior == .alwaysDeny {
-            if tracing { QQSelectionTrace.log("clipboard access denied") }
-            return nil
-        }
-        guard let snapshot = PasteboardSnapshot(pasteboard) else {
-            if tracing { QQSelectionTrace.log("could not snapshot previous clipboard") }
-            return nil
-        }
-        let usesSessionCopy = app.bundleIdentifier == "com.tencent.qq"
+        if #available(macOS 15.4, *), pasteboard.accessBehavior == .alwaysDeny { return nil }
+        guard let snapshot = PasteboardSnapshot(pasteboard) else { return nil }
 
         // Once the key has been sent, finish restoring the clipboard even if the
         // caller cancels the translation or starts a different command.
         let copy = Task<String?, Never> {
             defer { selectionCopy = nil }
             guard pasteboard.changeCount == snapshot.changeCount, !IsSecureEventInputEnabled(),
-                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
-                if tracing { QQSelectionTrace.log("clipboard or focus changed before posting") }
-                return nil
-            }
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return nil }
             down.flags = .maskCommand
             up.flags = .maskCommand
-            let originalInput = usesSessionCopy ? hardwareInputCounts() : nil
-            if tracing { QQSelectionTrace.log("posting Command-C") }
-            if usesSessionCopy {
-                // QQ's message view is hosted in a separate renderer. Route the
-                // shortcut through the frontmost window's normal keyboard path.
-                down.post(tap: .cgSessionEventTap)
-                up.post(tap: .cgSessionEventTap)
-            } else {
-                down.postToPid(pid)
-                up.postToPid(pid)
-            }
+            let originalInput = hardwareInputCounts()
+            down.post(tap: .cgSessionEventTap)
+            up.post(tap: .cgSessionEventTap)
 
-            let deadline = ContinuousClock.now + .milliseconds(usesSessionCopy ? 600 : 350)
-            // QQ can publish one copy in several pasteboard updates. Measure
-            // the quiet period after the last update instead of counting writes.
+            let deadline = ContinuousClock.now + .milliseconds(600)
+            // A single copy can publish several pasteboard updates.
             var observedCount: Int?
             var lastChange = ContinuousClock.now
-            @MainActor func inputUnchanged() -> Bool {
-                guard let originalInput else { return true }
-                return originalInput == hardwareInputCounts()
-            }
             while ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(15))
-                let count = pasteboard.changeCount
                 guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-                      !IsSecureEventInputEnabled() else {
-                    if tracing { QQSelectionTrace.log("focus or secure input changed while waiting") }
-                    return nil
-                }
+                      !IsSecureEventInputEnabled() else { return nil }
+                let count = pasteboard.changeCount
                 if count == snapshot.changeCount { continue }
-                let changes = count - snapshot.changeCount
-                guard changes > 0, usesSessionCopy || changes == 1 else {
-                    if tracing { QQSelectionTrace.log("clipboard change count advanced by \(changes)") }
-                    return nil
-                }
-                guard inputUnchanged() else {
-                    if tracing { QQSelectionTrace.log("intervening hardware input") }
-                    return nil
-                }
+                guard count > snapshot.changeCount, originalInput == hardwareInputCounts() else { return nil }
                 guard let types = pasteboard.types, !types.isEmpty else { continue }
+                guard !types.contains(concealed) else { return nil }
                 if observedCount != count {
-                    if tracing {
-                        QQSelectionTrace.log("clipboard updated (changes=\(changes), plain=\(types.contains(.string)), rtf=\(types.contains(.rtf)), html=\(types.contains(.html)), file=\(types.contains(.fileURL)), concealed=\(types.contains(concealed)))")
-                    }
                     observedCount = count
                     lastChange = .now
                 }
-                guard !types.contains(concealed) else { return nil }
-                if usesSessionCopy, lastChange.duration(to: .now) < .milliseconds(35) { continue }
-                let copied = selectionText(from: pasteboard, types: types, acceptsRichText: usesSessionCopy)
-                if usesSessionCopy, copied == nil { continue }
+                guard lastChange.duration(to: .now) >= .milliseconds(35),
+                      let copied = selectionText(from: pasteboard) else { continue }
                 guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-                      inputUnchanged(), snapshot.restore(to: pasteboard, replacing: count) else {
-                    if tracing { QQSelectionTrace.log("clipboard restore failed") }
-                    return nil
-                }
-                if tracing { QQSelectionTrace.log(copied == nil ? "clipboard had no usable text" : "clipboard text recovered") }
+                      !IsSecureEventInputEnabled(), originalInput == hardwareInputCounts(),
+                      snapshot.restore(to: pasteboard, replacing: count) else { return nil }
                 return copied
             }
             if let observedCount, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-               !IsSecureEventInputEnabled(), inputUnchanged() {
+               !IsSecureEventInputEnabled(), originalInput == hardwareInputCounts() {
                 _ = snapshot.restore(to: pasteboard, replacing: observedCount)
             }
-            if tracing { QQSelectionTrace.log(observedCount == nil ? "copy timed out without data" : "copy timed out without usable text") }
             return nil
         }
         selectionCopy = copy
@@ -663,14 +616,7 @@ enum Clipboard {
         return events.map { CGEventSource.counterForEventType(.hidSystemState, eventType: $0) }
     }
 
-    private static func selectionText(
-        from pasteboard: NSPasteboard, types: [NSPasteboard.PasteboardType], acceptsRichText: Bool
-    ) -> String? {
-        if !acceptsRichText {
-            guard !types.contains(.fileURL),
-                  let text = pasteboard.string(forType: .string), text.hasNonWhitespace else { return nil }
-            return text
-        }
+    private static func selectionText(from pasteboard: NSPasteboard) -> String? {
         let parts = (pasteboard.pasteboardItems ?? []).compactMap { item -> String? in
             guard !item.types.contains(.fileURL) else { return nil }
             if let text = item.string(forType: .string), text.hasNonWhitespace { return text }
@@ -698,18 +644,6 @@ enum Clipboard {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
     }
-}
-
-@MainActor
-enum QQSelectionTrace {
-    private static let enabled = ProcessInfo.processInfo.arguments.contains("--trace-qq-selection")
-    private static let logger = Logger(subsystem: "com.termique.luqri", category: "qq-selection")
-
-    static var isActive: Bool {
-        enabled && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.tencent.qq"
-    }
-
-    static func log(_ message: String) { logger.notice("\(message, privacy: .public)") }
 }
 
 @MainActor
