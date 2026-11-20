@@ -101,6 +101,7 @@ private struct ScreenSelection: Sendable {
 private final class SelectionOverlay {
     private var windows: [UtilityPanel] = []
     private var completion: ((ScreenSelection?) -> Void)?
+    private var hasSelectionCursor = false
 
     func begin(completion: @escaping (ScreenSelection?) -> Void) {
         self.completion = completion
@@ -138,6 +139,8 @@ private final class SelectionOverlay {
         }
         NSApp.activate()
         keyWindow.makeKeyAndOrderFront(nil)
+        NSCursor.crosshair.push()
+        hasSelectionCursor = true
     }
 
     func cancel() {
@@ -147,6 +150,10 @@ private final class SelectionOverlay {
     private func finish(_ selection: ScreenSelection?) {
         let callback = completion
         completion = nil
+        if hasSelectionCursor {
+            NSCursor.pop()
+            hasSelectionCursor = false
+        }
         for window in windows { window.orderOut(nil) }
         windows.removeAll()
         callback?(selection)
