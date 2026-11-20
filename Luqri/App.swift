@@ -284,7 +284,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     private func translateSelection() {
+        let tracing = QQSelectionTrace.isActive
+        if tracing { QQSelectionTrace.log("shortcut received") }
         guard AppPermission.accessibility.isGranted else {
+            if tracing { QQSelectionTrace.log("accessibility permission unavailable") }
             showPermissionPrompt(.accessibility) { [weak self] in self?.showTranslation() }
             return
         }
@@ -300,13 +303,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         work = Task(priority: .userInitiated) { [weak self] in
             let text: String?
             switch await SelectedText.read(from: pid, at: point) {
-            case let .text(selection): text = selection
-            case .unavailable: text = await Clipboard.copySelection(from: pid)
-            case .protected: text = nil
+            case let .text(selection):
+                if tracing { QQSelectionTrace.log("accessibility returned selected text") }
+                text = selection
+            case .unavailable:
+                if tracing { QQSelectionTrace.log("accessibility returned no selection") }
+                text = await Clipboard.copySelection(from: pid)
+            case .protected:
+                if tracing { QQSelectionTrace.log("accessibility detected a protected element or cancellation") }
+                text = nil
             }
             guard let self, !Task.isCancelled else { return }
             self.work = nil
             let selection = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid ? text : nil
+            if tracing { QQSelectionTrace.log(selection == nil ? "showing an empty translation window" : "showing the translation window with source text") }
             self.showTranslation(selection)
         }
     }
