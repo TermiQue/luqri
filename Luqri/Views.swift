@@ -128,7 +128,6 @@ struct TranslationView: View {
     @State private var speech: SpeechPlayback?
     @State private var showEmptyClipboardHint = false
 
-    let needsSelectionPermission: Bool
     @Bindable var model: TranslationModel
     let focusEditor: () -> Void
     let close: () -> Void
@@ -158,9 +157,7 @@ struct TranslationView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !hasText && needsSelectionPermission {
-                notice("读取选中文字需授权辅助功能", action: "前往授权") { AppPermission.accessibility.requestOrManage() }
-            } else if !hasText && showEmptyClipboardHint {
+            if !hasText && showEmptyClipboardHint {
                 clipboardHint
             }
             if model.enabledProviders.isEmpty {
@@ -590,6 +587,7 @@ struct SettingsView: View {
 
     @Bindable var model: TranslationModel
     let shortcuts: GlobalShortcuts
+    let requestPermission: (AppPermission) -> Void
     @AppStorage(OCRProvider.preferenceKey) private var ocrProvider = OCRProvider.appleVision
     @State private var accessKey = ""
     @State private var secretKey = ""
@@ -697,7 +695,10 @@ struct SettingsView: View {
                     LabeledContent(permission.title) {
                         Text(granted ? "已授权" : "未授权")
                             .foregroundStyle(.secondary)
-                        Button(granted ? "管理…" : "授权…") { permission.requestOrManage() }
+                        Button(granted ? "管理…" : "授权…") {
+                            if permission.isGranted { permission.openSettings() }
+                            else { requestPermission(permission) }
+                        }
                             .accessibilityLabel("\(granted ? "管理" : "授权")\(permission.title)")
                     }
                     .help(permission.purpose)

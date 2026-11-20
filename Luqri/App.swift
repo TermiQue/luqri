@@ -1,12 +1,11 @@
 import AppKit
-@preconcurrency import ApplicationServices
 import ImageIO
 import SwiftUI
 
 @main
 @MainActor
 enum LuqriApp {
-    static func loadDockIcon(size: NSSize) -> NSImage? {
+    static func loadAppIcon(size: NSSize) -> NSImage? {
         guard let iconFile = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
               let url = Bundle.main.url(forResource: iconFile, withExtension: nil),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
@@ -36,52 +35,6 @@ enum LuqriApp {
 }
 
 @MainActor
-enum AppPermission: String, CaseIterable {
-    case accessibility, screenRecording
-
-    var title: String {
-        switch self {
-        case .accessibility: "辅助功能"
-        case .screenRecording: "录屏与系统录音"
-        }
-    }
-
-    var purpose: String {
-        switch self {
-        case .accessibility: "读取选中文字"
-        case .screenRecording: "截图识别与翻译"
-        }
-    }
-
-    var isGranted: Bool {
-        switch self {
-        case .accessibility: AXIsProcessTrusted()
-        case .screenRecording: CGPreflightScreenCaptureAccess()
-        }
-    }
-
-    func requestOrManage() {
-        let defaults = UserDefaults.standard
-        let requestKey = "requestedPermission.\(rawValue)"
-        if !isGranted, !defaults.bool(forKey: requestKey) {
-            defaults.set(true, forKey: requestKey)
-            switch self {
-            case .accessibility:
-                let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-                _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-            case .screenRecording:
-                _ = CGRequestScreenCaptureAccess()
-            }
-            return
-        }
-
-        let anchor = self == .accessibility ? "Privacy_Accessibility" : "Privacy_ScreenCapture"
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else { return }
-        NSWorkspace.shared.open(url)
-    }
-}
-
-@MainActor
 final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     private let model = TranslationModel()
     private let screenshotCapture = ScreenshotCapture()
@@ -96,7 +49,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private var feedbackPanel: NSPanel?
     private var feedbackTask: Task<Void, Never>?
     private var work: Task<Void, Never>?
-    private var showingScreenPermissionAlert = false
+    private var permissionPrompt: PermissionPrompt?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let shortcuts = GlobalShortcuts(
@@ -120,6 +73,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             return nil
         }
         let window = event.window ?? NSApp.keyWindow
+        if window != nil, window === permissionPrompt?.window, Shortcut.isEscapeEvent(event) {
+            if !event.isARepeat { permissionPrompt?.dismiss() }
+            return nil
+        }
         if let key = Shortcut.commandKey(for: event) {
             switch key {
             case "w" where canClose(window):
@@ -156,6 +113,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        if permissionPrompt?.permission.isGranted == true { closePermissionPrompt() }
         if let window = settingsAwaitingFocus {
             settingsAwaitingFocus = nil
             window.makeKeyAndOrderFront(nil)
@@ -262,13 +220,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     private func canClose(_ window: NSWindow?) -> Bool {
         guard let window, window.attachedSheet == nil else { return false }
-        return window === settingsWindow || window === translationPanel
+        return window === settingsWindow || window === translationPanel || window === permissionPrompt?.window
     }
 
     private func closeWindow(_ window: NSWindow?) {
         guard let window else { return }
         if window === translationPanel { closeTranslation() }
         else if window === settingsWindow { window.performClose(nil) }
+        else if window === permissionPrompt?.window { permissionPrompt?.dismiss() }
     }
 
     @objc private func closeFrontWindow() { closeWindow(NSApp.keyWindow) }
@@ -323,9 +282,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     private func translateSelection() {
         guard AppPermission.accessibility.isGranted else {
-            showTranslation(needsSelectionPermission: true)
+            showPermissionPrompt(.accessibility) { [weak self] in self?.showTranslation() }
             return
         }
+        closePermissionPrompt()
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
               pid != ProcessInfo.processInfo.processIdentifier else {
             showTranslation()
@@ -346,6 +306,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private func captureForOCR(
         keepsFocus: Bool = false, process: @escaping (OCRProvider, Screenshot) async throws -> Void
     ) {
+        guard AppPermission.screenRecording.isGranted else {
+            showPermissionPrompt(.screenRecording)
+            return
+        }
+        closePermissionPrompt()
         let previousApp = keepsFocus ? NSWorkspace.shared.frontmostApplication : nil
         closeTranslation()
         let provider = OCRProvider.selected()
@@ -361,7 +326,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
                 anchor = screenshot.anchor
                 try await process(provider, screenshot)
             } catch ScreenshotCapture.Failure.permissionDenied {
-                if !Task.isCancelled { self.showScreenRecordingPermission() }
+                if !Task.isCancelled { self.showPermissionPrompt(.screenRecording) }
             } catch is CancellationError {
                 if !Task.isCancelled { ScreenshotCapture.restoreFocus(to: previousApp) }
             } catch {
@@ -373,22 +338,27 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
     }
 
-    private func showScreenRecordingPermission() {
-        guard !showingScreenPermissionAlert else { return }
-        showingScreenPermissionAlert = true
-        defer { showingScreenPermissionAlert = false }
+    private func showPermissionPrompt(_ permission: AppPermission, onLater: (() -> Void)? = nil) {
+        if let prompt = permissionPrompt, prompt.permission == permission {
+            if let onLater { prompt.onLater = onLater }
+            prompt.present()
+            return
+        }
+        closePermissionPrompt()
+        let prompt = PermissionPrompt(permission: permission)
+        prompt.onLater = onLater
+        prompt.onDismiss = { [weak self] in self?.permissionPrompt = nil }
+        permissionPrompt = prompt
+        prompt.present()
+    }
 
-        let alert = NSAlert()
-        alert.messageText = "截图需要录屏权限"
-        alert.informativeText = "在系统设置中允许 Luqri 录屏后，请重新触发截图。若 macOS 要求退出，请重新打开 Luqri。"
-        alert.addButton(withTitle: "前往授权")
-        alert.addButton(withTitle: "稍后")
-        NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn { AppPermission.screenRecording.requestOrManage() }
+    private func closePermissionPrompt() {
+        permissionPrompt?.close()
+        permissionPrompt = nil
     }
 
     private func showTranslation(
-        _ input: String? = nil, needsSelectionPermission: Bool = false, appearance: NSAppearance? = nil,
+        _ input: String? = nil, appearance: NSAppearance? = nil,
         loadInput: (() async throws -> String)? = nil
     ) {
         let screen = NSScreen.main ?? NSScreen.screens.first
@@ -415,7 +385,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             return true
         }
         let view = TranslationView(
-            needsSelectionPermission: needsSelectionPermission,
             model: model, focusEditor: { [weak panel] in panel?.focusSourceEditor() },
             close: { [weak self] in self?.closeTranslation() },
             openSettings: { [weak self] in self?.showSettings() },
@@ -504,7 +473,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if let settingsWindow {
             window = settingsWindow
         } else {
-            let controller = NSHostingController(rootView: SettingsView(model: model, shortcuts: shortcuts))
+            let controller = NSHostingController(rootView: SettingsView(model: model, shortcuts: shortcuts) { [weak self] permission in
+                self?.showPermissionPrompt(permission)
+            })
             controller.sizingOptions = []
             window = NSWindow(
                 contentRect: CGRect(origin: .zero, size: SettingsView.preferredSize),
@@ -534,7 +505,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         settingsAwaitingFocus = window
         if NSApp.activationPolicy() != .regular, NSApp.setActivationPolicy(.regular) {
             let tile = NSApp.dockTile
-            if tile.contentView == nil, let artwork = LuqriApp.loadDockIcon(size: tile.size) {
+            if tile.contentView == nil, let artwork = LuqriApp.loadAppIcon(size: tile.size) {
                 let icon = NSImageView(frame: CGRect(origin: .zero, size: tile.size))
                 icon.image = artwork
                 icon.imageScaling = .scaleProportionallyUpOrDown
