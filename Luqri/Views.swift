@@ -43,21 +43,9 @@ struct LucideIcon: View {
 final class UtilityPanel: NSPanel {
     var onEscape: (() -> Void)?
     var onEditorReturn: (() -> Bool)?
-    var hidesOnDeactivateAfterFirstKey = false
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func cancelOperation(_ sender: Any?) { onEscape?() }
-
-    override func becomeKey() {
-        super.becomeKey()
-        finishInitialPresentation()
-    }
-
-    func finishInitialPresentation() {
-        guard hidesOnDeactivateAfterFirstKey, isKeyWindow, NSApp.isActive else { return }
-        hidesOnDeactivateAfterFirstKey = false
-        hidesOnDeactivate = true
-    }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, event.charactersIgnoringModifiers == "\r",

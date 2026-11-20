@@ -38,7 +38,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var shortcuts: GlobalShortcuts?
     private var applicationKeyMonitor: Any?
     private var translationPanel: UtilityPanel?
+    private var translationHasTakenFocus = false
+    private var translationPinned = false
     private var settingsWindow: NSWindow?
+    private weak var settingsAwaitingFocus: NSWindow?
     private var feedbackPanel: NSPanel?
     private var feedbackTask: Task<Void, Never>?
     private var work: Task<Void, Never>?
@@ -84,19 +87,23 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        translationPanel?.finishInitialPresentation()
+        if let window = settingsAwaitingFocus {
+            settingsAwaitingFocus = nil
+            window.makeKeyAndOrderFront(nil)
+        }
+        if translationPanel?.isKeyWindow == true { translationHasTakenFocus = true }
     }
 
     func applicationDidResignActive(_ notification: Notification) {
         shortcuts?.cancelRecording()
+        dismissUnpinnedTranslation()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard let window = settingsWindow else { return true }
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil)
+        focusSettings(window)
         return false
     }
 
@@ -277,6 +284,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ input: String? = nil, needsSelectionPermission: Bool = false, appearance: NSAppearance? = nil
     ) {
         let screen = NSScreen.main ?? NSScreen.screens.first
+        settingsAwaitingFocus = nil
         closeTranslation()
         let input = input ?? ""
         let hasInput = input.hasNonWhitespace
@@ -290,7 +298,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.hidesOnDeactivateAfterFirstKey = true
+        panel.delegate = self
         panel.isMovableByWindowBackground = true
         panel.title = "Luqri 翻译"
         panel.onEscape = { [weak self] in self?.closeTranslation() }
@@ -305,10 +313,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model: model, isPanelKey: { [weak panel] in panel?.isKeyWindow == true },
             close: { [weak self] in self?.closeTranslation() },
             openSettings: { [weak self] in self?.showSettings() },
-            setPinned: { [weak panel] pinned in
-                panel?.hidesOnDeactivateAfterFirstKey = false
-                panel?.hidesOnDeactivate = !pinned
-            },
+            setPinned: { [weak self] pinned in self?.translationPinned = pinned },
             resize: { [weak self, weak panel] size in
                 Task { @MainActor in
                     guard let self, let panel, self.translationPanel === panel else { return }
@@ -357,9 +362,27 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func closeTranslation() {
-        translationPanel?.orderOut(nil)
+        let panel = translationPanel
         translationPanel = nil
+        translationHasTakenFocus = false
+        translationPinned = false
+        panel?.orderOut(nil)
         model.reset()
+    }
+
+    private func dismissUnpinnedTranslation() {
+        guard translationHasTakenFocus, !translationPinned, translationPanel?.attachedSheet == nil else { return }
+        closeTranslation()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, NSApp.isActive else { return }
+        if window === translationPanel { translationHasTakenFocus = true }
+        if window === settingsAwaitingFocus { settingsAwaitingFocus = nil }
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        if (notification.object as? NSWindow) === translationPanel { dismissUnpinnedTranslation() }
     }
 
     @objc private func showSettings() {
@@ -390,13 +413,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             window.center()
         }
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil)
+        focusSettings(window)
         if let frame, window.frame != frame {
             window.setFrame(frame, display: true)
         }
+    }
+
+    private func focusSettings(_ window: NSWindow) {
+        settingsAwaitingFocus = window
+        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.orderFrontRegardless()
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        if NSApp.isActive, window.isKeyWindow { settingsAwaitingFocus = nil }
     }
 
     private func settingsFrame(for window: NSWindow, screen: CGRect, visible: CGRect) -> CGRect {
@@ -412,6 +442,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if (notification.object as? NSWindow) === settingsWindow {
             shortcuts?.cancelRecording()
+            settingsAwaitingFocus = nil
             settingsWindow = nil
             NSApp.setActivationPolicy(.accessory)
         }
