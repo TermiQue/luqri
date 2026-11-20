@@ -2,9 +2,21 @@ import AppKit
 import QuartzCore
 import ScreenCaptureKit
 
-struct Screenshot: Sendable {
-    let image: CGImage
+@MainActor
+final class Screenshot {
+    private var image: CGImage?
     let anchor: CGPoint
+
+    init(image: CGImage, anchor: CGPoint) {
+        self.image = image
+        self.anchor = anchor
+    }
+
+    func takeImage() -> CGImage {
+        guard let image else { preconditionFailure("A screenshot can only be consumed once.") }
+        self.image = nil
+        return image
+    }
 }
 
 @MainActor

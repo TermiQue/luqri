@@ -22,10 +22,10 @@ enum OCRProvider: String, CaseIterable, Identifiable {
         Self(rawValue: defaults.string(forKey: preferenceKey) ?? "") ?? .appleVision
     }
 
-    func recognize(_ image: CGImage) async throws -> String {
+    func recognize(_ image: consuming CGImage) async throws -> String {
         switch self {
-        case .appleVision: try await ScreenOCR.recognize(image)
-        case .volcengine: try await VolcengineOCR.recognize(image)
+        case .appleVision: try await ScreenOCR.recognize(consume image)
+        case .volcengine: try await VolcengineOCR.recognize(consume image)
         }
     }
 }
@@ -56,11 +56,12 @@ enum ScreenOCR {
             throw error
         }
         try Task.checkCancellation()
-        let lines = request.results?.compactMap { observation -> OCRLine? in
+        let width = image.width, height = image.height
+        let lines = (request.results ?? []).lazy.compactMap { observation -> OCRLine? in
             guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty else { return nil }
-            return OCRLine(text: text, bounds: VNImageRectForNormalizedRect(observation.boundingBox, image.width, image.height))
-        } ?? []
+            return OCRLine(text: text, bounds: VNImageRectForNormalizedRect(observation.boundingBox, width, height))
+        }
         let text = OCRLine.paragraphs(from: lines)
         guard !text.isEmpty else { throw OCRFailure.noText }
         return text
@@ -77,12 +78,14 @@ struct OCRLine {
     let text: String
     let bounds: CGRect
 
-    static func paragraphs(from lines: [Self]) -> String {
-        guard let first = lines.first else { return "" }
-        var text = first.text
-        for (previous, next) in zip(lines, lines.dropFirst()) {
+    static func paragraphs(from lines: some Sequence<Self>) -> String {
+        var iterator = lines.makeIterator()
+        guard var previous = iterator.next() else { return "" }
+        var text = previous.text
+        while let next = iterator.next() {
             text += separator(between: previous, and: next)
             text += next.text
+            previous = next
         }
         return text
     }

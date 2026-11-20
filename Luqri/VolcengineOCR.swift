@@ -48,10 +48,18 @@ enum VolcengineOCR {
         let ResponseMetadata: VolcengineResponseMetadata?
     }
 
-    static func recognize(_ image: CGImage) async throws -> String {
+    static func recognize(_ image: consuming CGImage) async throws -> String {
         try Task.checkCancellation()
         guard let credentials = try CloudCredentials.load() else { throw VolcengineError.missingCredentials }
-        let (request, imageHeight) = try autoreleasepool {
+        // Only the encoded request needs to survive the network wait.
+        let (request, imageHeight) = try makeRequest(from: consume image, credentials: credentials)
+        let (data, status) = try await Volcengine.send(request)
+        try Task.checkCancellation()
+        return try decode(data, httpStatus: status, imageHeight: imageHeight)
+    }
+
+    private static func makeRequest(from image: consuming CGImage, credentials: CloudCredentials) throws -> (URLRequest, Int) {
+        try autoreleasepool {
             let prepared = try prepare(image)
             let payload = try formPayload(for: prepared)
             try Task.checkCancellation()
@@ -60,9 +68,6 @@ enum VolcengineOCR {
             )
             return (request, prepared.height)
         }
-        let (data, status) = try await Volcengine.send(request)
-        try Task.checkCancellation()
-        return try decode(data, httpStatus: status, imageHeight: imageHeight)
     }
 
     static func decode(_ data: Data, httpStatus: Int, imageHeight: Int) throws -> String {
@@ -78,7 +83,7 @@ enum VolcengineOCR {
             throw Failure.invalidResponse
         }
 
-        let lines = page.lines.compactMap { line -> OCRLine? in
+        let lines = page.lines.lazy.compactMap { line -> OCRLine? in
             let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             return OCRLine(text: text, bounds: line.bounds(imageHeight: imageHeight))

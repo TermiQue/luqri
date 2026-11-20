@@ -5,11 +5,11 @@ import SwiftUI
 @main
 @MainActor
 enum LuqriApp {
-    static let bundledIcon: NSImage? = {
+    static func loadBundledIcon() -> NSImage? {
         guard let iconFile = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
               let url = Bundle.main.url(forResource: iconFile, withExtension: nil) else { return nil }
         return NSImage(contentsOf: url)
-    }()
+    }
 
     static func main() {
         let application = NSApplication.shared
@@ -255,14 +255,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             translateSelection()
         case .recognize:
             captureForOCR { provider, screenshot in
-                let text = try await provider.recognize(screenshot.image)
+                let text = try await provider.recognize(screenshot.takeImage())
                 try Task.checkCancellation()
                 Clipboard.write(text)
             }
         case .screenshotTranslate:
             captureForOCR(keepsFocus: true) { [weak self] provider, screenshot in
                 self?.showTranslation(appearance: NSAppearance(named: .aqua)) {
-                    try await provider.recognize(screenshot.image)
+                    try await provider.recognize(screenshot.takeImage())
                 }
             }
         }
@@ -483,7 +483,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if NSApp.activationPolicy() != .regular, NSApp.setActivationPolicy(.regular) {
             let tile = NSApp.dockTile
             let icon = NSImageView(frame: CGRect(origin: .zero, size: tile.size))
-            if let artwork = LuqriApp.bundledIcon { NSApp.applicationIconImage = artwork }
+            if let artwork = LuqriApp.loadBundledIcon() { NSApp.applicationIconImage = artwork }
             icon.image = NSApp.applicationIconImage
             icon.imageScaling = .scaleProportionallyUpOrDown
             icon.autoresizingMask = [.width, .height]
