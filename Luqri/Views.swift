@@ -480,22 +480,40 @@ struct SettingsView: View {
                     ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
                 }
                 ForEach(Provider.allCases) { provider in
-                    Toggle(provider.title, isOn: Binding(
-                        get: { model.enabledProviders.contains(provider) },
-                        set: { model.setEnabled($0, for: provider) }
-                    ))
-                }
-                if model.enabledProviders.contains(.volcengine) {
-                    Link("机器翻译开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!)
+                    LabeledContent {
+                        Toggle(provider.title, isOn: Binding(
+                            get: { model.enabledProviders.contains(provider) },
+                            set: { model.setEnabled($0, for: provider) }
+                        ))
+                        .labelsHidden()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text(provider.title)
+                            if provider == .volcengine, model.enabledProviders.contains(provider) {
+                                Link("开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!)
+                                    .font(.caption)
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("机器翻译开通与计费")
+                            }
+                        }
+                    }
                 }
             }
 
             Section("OCR 服务") {
-                Picker("识别服务", selection: $ocrProvider) {
-                    ForEach(OCRProvider.allCases) { Text($0.title).tag($0) }
-                }
-                if ocrProvider == .volcengine {
-                    Link("多语种 OCR 开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1")!)
+                LabeledContent("识别服务") {
+                    HStack(spacing: 10) {
+                        Picker("识别服务", selection: $ocrProvider) {
+                            ForEach(OCRProvider.allCases) { Text($0.title).tag($0) }
+                        }
+                        .labelsHidden()
+                        if ocrProvider == .volcengine {
+                            Link("开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1")!)
+                                .font(.caption)
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("多语种 OCR 开通与计费")
+                        }
+                    }
                 }
             }
 
