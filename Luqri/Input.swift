@@ -601,8 +601,8 @@ enum Clipboard {
             }
 
             let deadline = ContinuousClock.now + .milliseconds(usesSessionCopy ? 600 : 350)
-            // QQ can clear the clipboard and then publish its selection separately.
-            let maximumChanges = usesSessionCopy ? 2 : 1
+            // QQ can publish one copy in several pasteboard updates. Measure
+            // the quiet period after the last update instead of counting writes.
             var observedCount: Int?
             var lastChange = ContinuousClock.now
             @MainActor func inputUnchanged() -> Bool {
@@ -619,8 +619,8 @@ enum Clipboard {
                 }
                 if count == snapshot.changeCount { continue }
                 let changes = count - snapshot.changeCount
-                guard (1...maximumChanges).contains(changes) else {
-                    if tracing { QQSelectionTrace.log("clipboard change count advanced by \(count - snapshot.changeCount)") }
+                guard changes > 0, usesSessionCopy || changes == 1 else {
+                    if tracing { QQSelectionTrace.log("clipboard change count advanced by \(changes)") }
                     return nil
                 }
                 guard inputUnchanged() else {
@@ -639,7 +639,8 @@ enum Clipboard {
                 if usesSessionCopy, lastChange.duration(to: .now) < .milliseconds(35) { continue }
                 let copied = selectionText(from: pasteboard, types: types, acceptsRichText: usesSessionCopy)
                 if usesSessionCopy, copied == nil { continue }
-                guard inputUnchanged(), snapshot.restore(to: pasteboard, replacing: count) else {
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                      inputUnchanged(), snapshot.restore(to: pasteboard, replacing: count) else {
                     if tracing { QQSelectionTrace.log("clipboard restore failed") }
                     return nil
                 }
