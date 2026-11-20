@@ -184,6 +184,7 @@ struct TranslationView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             focusEditorOnOpen()
         }
+        .onChange(of: model.isLoadingInput) { focusEditorOnOpen() }
         .onDisappear { speaker?.stopSpeaking(at: .immediate) }
         .onChange(of: model.text) {
             copiedSource = false
@@ -208,7 +209,7 @@ struct TranslationView: View {
     }
 
     private func focusEditorOnOpen() {
-        guard !didFocusEditor, isPanelKey() else { return }
+        guard !didFocusEditor, !model.isLoadingInput, isPanelKey() else { return }
         didFocusEditor = true
         editorFocused = true
     }
@@ -254,18 +255,25 @@ struct TranslationView: View {
     private var editor: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .topLeading) {
-                if model.text.isEmpty {
-                    Text("输入或粘贴文字")
-                        .foregroundStyle(.secondary)
+                if model.isLoadingInput {
+                    LoadingIndicator(title: "正在识别文字")
                         .padding(.leading, 5)
                         .padding(.top, 1)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else {
+                    if model.text.isEmpty {
+                        Text(model.inputError ?? "输入或粘贴文字")
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 5)
+                            .padding(.top, 1)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(model.inputError == nil)
+                    }
+                    TextEditor(text: editorText)
+                        .focused($editorFocused)
+                        .scrollContentBackground(.hidden)
+                        .accessibilityLabel("原文")
                 }
-                TextEditor(text: editorText)
-                    .focused($editorFocused)
-                    .scrollContentBackground(.hidden)
-                    .accessibilityLabel("原文")
             }
             .font(.system(size: 14))
             .frame(height: 64)
@@ -279,6 +287,7 @@ struct TranslationView: View {
                 }
                 .disabled(!hasText)
                 iconButton("clipboard-paste", label: "翻译剪贴板", action: pasteAndTranslate)
+                    .disabled(model.isLoadingInput)
                 Spacer()
                 Button(action: translate) {
                     Text("翻译")
@@ -371,7 +380,7 @@ struct TranslationView: View {
         VStack(alignment: .leading, spacing: 6) {
             switch output {
             case .translating:
-                TranslationProgressView()
+                LoadingIndicator(title: "正在翻译")
             case .failed(let error):
                 readableOutput(error)
             case .translated(let text):
@@ -446,12 +455,13 @@ struct TranslationView: View {
     }
 }
 
-private struct TranslationProgressView: View {
+private struct LoadingIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let title: String
 
     var body: some View {
         HStack(spacing: 6) {
-            Text("正在翻译")
+            Text(title)
             Group {
                 if reduceMotion {
                     dots(highlighted: nil)
@@ -652,13 +662,12 @@ struct SettingsView: View {
     }
 }
 
-struct FeedbackView: View {
-    let icon: String
+struct OCRErrorView: View {
     let message: String
 
     var body: some View {
         HStack(spacing: 8) {
-            LucideIcon(name: icon)
+            LucideIcon(name: "x")
             Text(message)
                 .font(.system(size: 13, weight: .medium))
                 .fixedSize()

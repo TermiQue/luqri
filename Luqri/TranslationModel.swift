@@ -74,6 +74,10 @@ enum TranslationOutput: Equatable {
 @MainActor
 @Observable
 final class TranslationModel {
+    private enum InputStatus: Equatable {
+        case idle, loading, failed(String)
+    }
+
     private let defaults: UserDefaults
 
     private(set) var text = ""
@@ -87,9 +91,16 @@ final class TranslationModel {
     private var selectedProviders: Set<Provider>
     private var outputs: [Provider: TranslationOutput] = [:]
     private var activeJobs: [Provider: TranslationJob] = [:]
+    private var inputStatus = InputStatus.idle
+    @ObservationIgnored private var inputTask: Task<Void, Never>?
     @ObservationIgnored private var cloudTask: Task<Void, Never>?
 
     var enabledProviders: [Provider] { Provider.allCases.filter(selectedProviders.contains) }
+    var isLoadingInput: Bool { inputStatus == .loading }
+    var inputError: String? {
+        if case .failed(let message) = inputStatus { return message }
+        return nil
+    }
     var isTranslating: Bool { !activeJobs.isEmpty }
     var appleJob: TranslationJob? { activeJobs[.apple] }
 
@@ -127,6 +138,26 @@ final class TranslationModel {
     func begin(with input: String) {
         edit(input)
         translate()
+    }
+
+    func loadInput(_ load: @escaping () async throws -> String) {
+        inputTask?.cancel()
+        inputStatus = .loading
+        inputTask = Task(priority: .userInitiated) { [weak self] in
+            do {
+                try Task.checkCancellation()
+                let input = try await load()
+                guard let self, !Task.isCancelled else { return }
+                self.inputTask = nil
+                self.inputStatus = .idle
+                self.begin(with: input)
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.inputTask = nil
+                let message = (error as? LocalizedError)?.errorDescription ?? "无法读取原文，请重试。"
+                self.inputStatus = error is CancellationError ? .idle : .failed(message)
+            }
+        }
     }
 
     func translate() {
@@ -167,12 +198,21 @@ final class TranslationModel {
 
     func edit(_ input: String) {
         guard text != input else { return }
+        cancelInputLoad()
         clearResults()
         text = input
     }
 
     func reset() {
+        cancelInputLoad()
         edit("")
+    }
+
+    private func cancelInputLoad() {
+        guard inputStatus != .idle else { return }
+        inputTask?.cancel()
+        inputTask = nil
+        inputStatus = .idle
     }
 
     private func automaticTarget(for input: String) -> Language {

@@ -45,7 +45,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var feedbackPanel: NSPanel?
     private var feedbackTask: Task<Void, Never>?
     private var work: Task<Void, Never>?
-    private var ocrProgress: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let shortcuts = GlobalShortcuts(
@@ -188,13 +187,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .translate:
             translateSelection()
         case .recognize:
-            recognizeScreenshot { [weak self] text, anchor in
+            captureForOCR { provider, screenshot in
+                let text = try await provider.recognize(screenshot.image)
+                try Task.checkCancellation()
                 Clipboard.write(text)
-                self?.showFeedback("已复制识别文字", icon: "check", at: anchor)
             }
         case .screenshotTranslate:
-            recognizeScreenshot(keepsFocus: true) { [weak self] text, _ in
-                self?.showTranslation(text, appearance: NSAppearance(named: .aqua))
+            captureForOCR(keepsFocus: true) { [weak self] provider, screenshot in
+                self?.showTranslation(appearance: NSAppearance(named: .aqua)) {
+                    try await provider.recognize(screenshot.image)
+                }
             }
         }
     }
@@ -203,7 +205,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         work?.cancel()
         work = nil
         screenshotCapture.cancelSelection()
-        stopOCRProgress()
         clearFeedback()
     }
 
@@ -229,7 +230,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func recognizeScreenshot(keepsFocus: Bool = false, deliver: @escaping (String, CGPoint) -> Void) {
+    private func captureForOCR(
+        keepsFocus: Bool = false, process: @escaping (OCRProvider, Screenshot) async throws -> Void
+    ) {
         let previousApp = keepsFocus ? NSWorkspace.shared.frontmostApplication : nil
         closeTranslation()
         let provider = OCRProvider.selected()
@@ -240,25 +243,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             do {
                 guard let screenshot = try await self.screenshotCapture.capture(keepsFocus: keepsFocus) else { return }
                 try Task.checkCancellation()
-                let recognitionAnchor = screenshot.anchor
-                anchor = recognitionAnchor
-                self.ocrProgress = Task { [weak self] in
-                    try? await Task.sleep(for: .milliseconds(250))
-                    guard let self, !Task.isCancelled else { return }
-                    self.showFeedback("正在识别文字…", icon: "scan-text", at: recognitionAnchor, autoHide: false)
-                }
-                let text = try await provider.recognize(screenshot.image)
-                try Task.checkCancellation()
-                self.stopOCRProgress()
-                deliver(text, anchor)
+                anchor = screenshot.anchor
+                try await process(provider, screenshot)
             } catch ScreenshotCapture.Failure.permissionDenied {
                 if !Task.isCancelled { self.showScreenRecordingPermission() }
             } catch {
                 guard !Task.isCancelled else { return }
-                self.stopOCRProgress()
                 ScreenshotCapture.restoreFocus(to: previousApp)
                 let message = (error as? LocalizedError)?.errorDescription ?? "截图或识别失败，请重新框选。"
-                self.showFeedback(message, icon: "x", at: anchor)
+                self.showOCRError(message, at: anchor)
             }
         }
     }
@@ -273,21 +266,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if alert.runModal() == .alertFirstButtonReturn { Permissions.openScreenCapture() }
     }
 
-    private func stopOCRProgress() {
-        guard let ocrProgress else { return }
-        ocrProgress.cancel()
-        self.ocrProgress = nil
-        clearFeedback()
-    }
-
     private func showTranslation(
-        _ input: String? = nil, needsSelectionPermission: Bool = false, appearance: NSAppearance? = nil
+        _ input: String? = nil, needsSelectionPermission: Bool = false, appearance: NSAppearance? = nil,
+        loadInput: (() async throws -> String)? = nil
     ) {
         let screen = NSScreen.main ?? NSScreen.screens.first
         settingsAwaitingFocus = nil
         closeTranslation()
-        let input = input ?? ""
-        let hasInput = input.hasNonWhitespace
         let panel = UtilityPanel(contentRect: .zero, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
         panel.appearance = appearance
         panel.level = .floating
@@ -324,7 +309,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hosting = NSHostingController(rootView: view.clipShape(RoundedRectangle(cornerRadius: TranslationView.cornerRadius)))
         hosting.sizingOptions = []
         panel.contentViewController = hosting
-        if hasInput { model.begin(with: input) }
+        if let loadInput {
+            model.loadInput(loadInput)
+        } else if let input, input.hasNonWhitespace {
+            model.begin(with: input)
+        }
         let size = hosting.sizeThatFits(in: CGSize(width: TranslationView.preferredWidth, height: .greatestFiniteMagnitude))
         if let screen {
             panel.setFrame(translationFrame(contentSize: size, screen: screen.frame, visible: screen.visibleFrame), display: false)
@@ -448,7 +437,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func showFeedback(_ message: String, icon: String, at anchor: CGPoint, autoHide: Bool = true) {
+    private func showOCRError(_ message: String, at anchor: CGPoint) {
         clearFeedback()
         let panel = NSPanel(
             contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
@@ -461,12 +450,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        let content = NSHostingView(rootView: FeedbackView(icon: icon, message: message))
+        let content = NSHostingView(rootView: OCRErrorView(message: message))
         panel.contentView = content
         position(panel, contentSize: content.fittingSize, at: anchor)
         feedbackPanel = panel
         panel.orderFrontRegardless()
-        guard autoHide else { return }
         feedbackTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             if !Task.isCancelled { self?.clearFeedback() }
