@@ -26,11 +26,11 @@ enum Command: UInt32, CaseIterable {
 
     var defaultShortcut: Shortcut {
         let (code, symbol): (Int, String) = switch self {
-        case .translate: (kVK_ANSI_T, "t")
-        case .recognize: (kVK_ANSI_O, "o")
-        case .screenshotTranslate: (kVK_ANSI_R, "r")
+        case .translate: (kVK_ANSI_D, "d")
+        case .recognize: (kVK_ANSI_W, "w")
+        case .screenshotTranslate: (kVK_ANSI_S, "s")
         }
-        return Shortcut(keyCode: UInt32(code), modifiers: UInt32(optionKey | shiftKey), key: symbol)
+        return Shortcut(keyCode: UInt32(code), modifiers: UInt32(optionKey), key: symbol)
     }
 }
 
@@ -123,7 +123,11 @@ struct Shortcut: Codable, Equatable {
 @Observable
 final class GlobalShortcuts {
     private static let signature: OSType = 0x4C555152
-    private static let preferencesKey = "globalShortcuts"
+    private static let preferencesKey = "customGlobalShortcuts"
+    private static let legacyPreferencesKey = "globalShortcuts"
+    private static let legacyDefaultKeyCodes: [Command: UInt32] = [
+        .translate: UInt32(kVK_ANSI_T), .recognize: UInt32(kVK_ANSI_O), .screenshotTranslate: UInt32(kVK_ANSI_R)
+    ]
     private static let defaultBindings = Dictionary(uniqueKeysWithValues: Command.allCases.map { ($0, $0.defaultShortcut) })
 
     private let defaults: UserDefaults
@@ -141,16 +145,15 @@ final class GlobalShortcuts {
         self.defaults = defaults
         self.action = action
         self.onChange = onChange
-        if let data = defaults.data(forKey: Self.preferencesKey),
-           let stored = try? JSONDecoder().decode([UInt32: Shortcut].self, from: data) {
-            bindings = Self.defaultBindings
-            for command in Command.allCases {
-                if let shortcut = stored[command.rawValue] {
-                    bindings[command] = shortcut
-                }
-            }
-        } else {
-            bindings = Self.defaultBindings
+        bindings = Self.defaultBindings
+        let custom = defaults.data(forKey: Self.preferencesKey)
+        guard let data = custom ?? defaults.data(forKey: Self.legacyPreferencesKey),
+              let stored = try? JSONDecoder().decode([UInt32: Shortcut].self, from: data) else { return }
+        for command in Command.allCases {
+            guard let shortcut = stored[command.rawValue] else { continue }
+            if custom == nil, shortcut.keyCode == Self.legacyDefaultKeyCodes[command],
+               shortcut.modifiers == UInt32(optionKey | shiftKey) { continue }
+            bindings[command] = shortcut
         }
     }
 
@@ -261,7 +264,9 @@ final class GlobalShortcuts {
         } else {
             bindings = updated
             failed = conflicts
-            let stored = Dictionary(uniqueKeysWithValues: updated.map { ($0.key.rawValue, $0.value) })
+            let stored = Dictionary(uniqueKeysWithValues: updated.compactMap { command, shortcut in
+                shortcut.usesSameKeys(as: command.defaultShortcut) ? nil : (command.rawValue, shortcut)
+            })
             if let data = try? JSONEncoder().encode(stored) {
                 defaults.set(data, forKey: Self.preferencesKey)
             }
@@ -273,7 +278,10 @@ final class GlobalShortcuts {
     private func register(_ bindings: [Command: Shortcut]) -> Set<Command> {
         guard handler != nil else { return Set(Command.allCases) }
         var failed = Set<Command>()
-        for command in Command.allCases {
+        let custom = Command.allCases.filter { command in
+            bindings[command]?.usesSameKeys(as: command.defaultShortcut) == false
+        }
+        for command in custom + Command.allCases.filter({ !custom.contains($0) }) {
             let shortcut = bindings[command] ?? command.defaultShortcut
             var reference: EventHotKeyRef?
             let id = EventHotKeyID(signature: Self.signature, id: command.rawValue)

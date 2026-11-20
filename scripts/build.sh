@@ -24,6 +24,7 @@ sed -e 's/$(DEVELOPMENT_LANGUAGE)/zh-Hans/g' \
     -e 's/$(MACOSX_DEPLOYMENT_TARGET)/15.0/g' \
     Luqri/Info.plist > "$app/Contents/Info.plist"
 cp Luqri/Icons/*.svg "$app/Contents/Resources/Icons/"
+cp Luqri/AppIcon.icns "$app/Contents/Resources/"
 cp Luqri/Lucide-LICENSE.txt "$app/Contents/Resources/"
 codesign --force --sign - "$app"
 codesign --verify "$app"

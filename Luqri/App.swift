@@ -93,6 +93,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let window = settingsWindow else { return true }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        return false
+    }
+
     private func buildMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = LucideIcon.menuImage("languages", size: 18)
@@ -367,12 +374,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             controller.sizingOptions = []
             window = NSWindow(
                 contentRect: CGRect(origin: .zero, size: SettingsView.preferredSize),
-                styleMask: [.titled, .closable], backing: .buffered, defer: false
+                styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false
             )
             window.contentViewController = controller
             window.title = "Luqri 设置"
-            window.level = .floating
-            window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            window.collectionBehavior = [.managed, .primary]
             window.isReleasedWhenClosed = false
             window.delegate = self
             settingsWindow = window
@@ -383,7 +389,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             window.center()
         }
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
         if let frame, window.frame != frame {
             window.setFrame(frame, display: true)
@@ -404,6 +412,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if (notification.object as? NSWindow) === settingsWindow {
             shortcuts?.cancelRecording()
             settingsWindow = nil
+            NSApp.setActivationPolicy(.accessory)
         }
     }
 
