@@ -364,7 +364,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
         let view = TranslationView(
             needsSelectionPermission: needsSelectionPermission,
-            model: model, isPanelKey: { [weak panel] in panel?.isKeyWindow == true },
+            model: model, focusEditor: { [weak panel] in panel?.focusSourceEditor() },
             close: { [weak self] in self?.closeTranslation() },
             openSettings: { [weak self] in self?.showSettings() },
             setPinned: { [weak self] pinned in self?.translationPinned = pinned },

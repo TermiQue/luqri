@@ -43,9 +43,29 @@ struct LucideIcon: View {
 final class UtilityPanel: NSPanel {
     var onEscape: (() -> Void)?
     var onEditorReturn: (() -> Bool)?
+    weak var sourceEditor: NSTextView? {
+        didSet { focusEditorOnOpen() }
+    }
+    private var didFocusEditor = false
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func cancelOperation(_ sender: Any?) { onEscape?() }
+
+    override func becomeKey() {
+        super.becomeKey()
+        focusEditorOnOpen()
+    }
+
+    @discardableResult
+    func focusSourceEditor() -> Bool {
+        guard let sourceEditor, sourceEditor.window === self else { return false }
+        return makeFirstResponder(sourceEditor)
+    }
+
+    private func focusEditorOnOpen() {
+        guard isKeyWindow, !didFocusEditor else { return }
+        didFocusEditor = focusSourceEditor()
+    }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, event.charactersIgnoringModifiers == "\r",
@@ -98,33 +118,11 @@ private struct PanelButtonStyle: ButtonStyle {
     }
 }
 
-private struct TranslationLanguageMenu: View {
-    let title: String
-    let automatic: String
-    @Binding var selection: Language?
-    @State private var hovered = false
-
-    var body: some View {
-        Picker(title, selection: $selection) {
-            Text(automatic).tag(nil as Language?)
-            ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
-        }
-        .labelsHidden()
-        .pickerStyle(.menu)
-        .buttonStyle(.borderless)
-        .frame(maxWidth: .infinity, minHeight: 28)
-        .background(.primary.opacity(hovered ? 0.075 : 0), in: RoundedRectangle(cornerRadius: 6))
-        .onHover { hovered = $0 }
-        .accessibilityLabel(title)
-    }
-}
-
 struct TranslationView: View {
     static let preferredWidth: CGFloat = 420
     static let cornerRadius: CGFloat = 13
 
-    @FocusState private var editorFocused: Bool
-    @State private var didFocusEditor = false
+    @State private var editorFocused = false
     @State private var pinned = false
     @State private var collapsedProviders = Set<Provider>()
     @State private var copiedSource = false
@@ -134,7 +132,7 @@ struct TranslationView: View {
 
     let needsSelectionPermission: Bool
     @Bindable var model: TranslationModel
-    let isPanelKey: () -> Bool
+    let focusEditor: () -> Void
     let close: () -> Void
     let openSettings: () -> Void
     let setPinned: (Bool) -> Void
@@ -156,7 +154,6 @@ struct TranslationView: View {
         VStack(alignment: .leading, spacing: 8) {
             header
             editor
-            languages
             if !hasText && needsSelectionPermission {
                 notice("读取选中文字需授权辅助功能", action: "打开系统设置") { Permissions.openAccessibility() }
             } else if !hasText && showEmptyClipboardHint {
@@ -180,11 +177,6 @@ struct TranslationView: View {
                 .allowsHitTesting(false)
         }
         .onGeometryChange(for: CGSize.self, of: \.size, action: resize)
-        .task { focusEditorOnOpen() }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            focusEditorOnOpen()
-        }
-        .onChange(of: model.isLoadingInput) { focusEditorOnOpen() }
         .onDisappear { speaker?.stopSpeaking(at: .immediate) }
         .onChange(of: model.text) {
             copiedSource = false
@@ -208,12 +200,6 @@ struct TranslationView: View {
         }
     }
 
-    private func focusEditorOnOpen() {
-        guard !didFocusEditor, !model.isLoadingInput, isPanelKey() else { return }
-        didFocusEditor = true
-        editorFocused = true
-    }
-
     private func notice(_ message: String, action: String, perform: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
             Text(message)
@@ -235,6 +221,10 @@ struct TranslationView: View {
 
     private var header: some View {
         HStack(spacing: 4) {
+            Text("翻译")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+            Spacer()
             iconButton("pin", label: pinned ? "取消置顶" : "置顶浮窗") {
                 pinned.toggle()
                 setPinned(pinned)
@@ -242,18 +232,7 @@ struct TranslationView: View {
             .foregroundStyle(pinned ? Color.accentColor : Color.secondary)
             .accessibilityAddTraits(pinned ? .isSelected : [])
 
-            if let icon = LuqriApp.bundledIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 16, height: 16)
-                    .accessibilityHidden(true)
-            }
-            Text("翻译")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-            Spacer()
-            iconButton("settings-2", label: "设置", action: openSettings)
+            iconButton("settings", label: "设置", action: openSettings)
             iconButton("x", label: "关闭", action: close)
         }
         .foregroundStyle(.secondary)
@@ -261,29 +240,18 @@ struct TranslationView: View {
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .topLeading) {
+            Group {
                 if model.isLoadingInput {
                     LoadingIndicator(title: "正在识别文字")
                         .padding(.leading, 5)
                         .padding(.top, 1)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 } else {
-                    if model.text.isEmpty {
-                        Text(model.inputError ?? "输入或粘贴文字")
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 5)
-                            .padding(.top, 1)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(model.inputError == nil)
-                    }
-                    TextEditor(text: editorText)
-                        .focused($editorFocused)
-                        .scrollContentBackground(.hidden)
-                        .accessibilityLabel("原文")
+                    TranslationEditor(text: editorText, inputError: model.inputError) { editorFocused = $0 }
                 }
             }
             .font(.system(size: 14))
-            .frame(height: 64)
+            .frame(height: TranslationEditor.height)
 
             HStack(spacing: 3) {
                 iconButton("volume-2", label: "朗读原文", action: speak)
@@ -315,23 +283,6 @@ struct TranslationView: View {
                 .strokeBorder(editorFocused ? Color.accentColor.opacity(0.5) : .clear)
                 .allowsHitTesting(false)
         }
-    }
-
-    private var languages: some View {
-        HStack(spacing: 5) {
-            TranslationLanguageMenu(title: "原文语言", automatic: "自动检测", selection: $model.source)
-            iconButton("arrow-left-right", label: "交换语向") {
-                let source = model.source
-                model.source = model.target
-                model.target = source
-            }
-            .disabled(model.source == model.target)
-            TranslationLanguageMenu(title: "译文语言", automatic: "自动选择", selection: $model.target)
-        }
-        .padding(.horizontal, 4)
-        .frame(maxWidth: .infinity)
-        .frame(height: 36)
-        .background(card)
     }
 
     private var clipboardHint: some View {
@@ -441,7 +392,7 @@ struct TranslationView: View {
         let input = Clipboard.text
         guard input.hasNonWhitespace else {
             if !hasText { showEmptyClipboardHint = true }
-            editorFocused = true
+            focusEditor()
             return
         }
         collapsedProviders.removeAll()
@@ -459,6 +410,135 @@ struct TranslationView: View {
         let language = model.source?.rawValue ?? NLLanguageRecognizer.dominantLanguage(for: String(model.text.prefix(512)))?.rawValue
         if let language { utterance.voice = AVSpeechSynthesisVoice(language: language) }
         synthesizer.speak(utterance)
+    }
+}
+
+private struct TranslationEditor: NSViewRepresentable {
+    static let height: CGFloat = 64
+
+    @Binding var text: String
+    let inputError: String?
+    let onFocusChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        let editor = EditorView()
+        editor.autoresizingMask = [.width]
+        editor.isVerticallyResizable = true
+        editor.isHorizontallyResizable = false
+        editor.minSize = NSSize(width: 0, height: Self.height)
+        editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        editor.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        editor.textContainer?.widthTracksTextView = true
+        editor.textContainerInset = NSSize(width: 0, height: 1)
+        editor.drawsBackground = false
+        editor.focusRingType = .none
+        editor.isRichText = false
+        editor.allowsUndo = true
+        editor.font = .systemFont(ofSize: 14)
+        editor.textColor = .labelColor
+        editor.insertionPointColor = .labelColor
+        editor.setAccessibilityLabel("原文")
+        editor.delegate = context.coordinator
+        editor.onFocusChange = { [weak coordinator = context.coordinator] focused in
+            Task { @MainActor in coordinator?.editor.onFocusChange(focused) }
+        }
+        editor.onUnmark = { [weak coordinator = context.coordinator, weak editor] in
+            Task { @MainActor in
+                if let editor { coordinator?.publishCommittedText(from: editor) }
+            }
+        }
+        scroll.documentView = editor
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.editor = self
+        guard let editor = scroll.documentView as? EditorView else { return }
+        editor.placeholder = inputError ?? "输入或粘贴文字"
+        editor.setAccessibilityHelp(inputError)
+        if editor.string != text, !editor.hasMarkedText() {
+            editor.string = text
+            editor.needsDisplay = true
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var editor: TranslationEditor
+
+        init(_ editor: TranslationEditor) { self.editor = editor }
+
+        func textDidChange(_ notification: Notification) {
+            guard let view = notification.object as? EditorView else { return }
+            view.needsDisplay = true
+            publishCommittedText(from: view)
+        }
+
+        func publishCommittedText(from view: EditorView) {
+            guard !view.isSettingMarkedText, !view.hasMarkedText(), editor.text != view.string else { return }
+            editor.text = view.string
+        }
+    }
+
+    final class EditorView: NSTextView {
+        var onFocusChange: ((Bool) -> Void)?
+        var onUnmark: (() -> Void)?
+        private(set) var isSettingMarkedText = false
+        var placeholder = "" {
+            didSet { if oldValue != placeholder { needsDisplay = true } }
+        }
+
+        var showsPlaceholder: Bool { string.isEmpty && !hasMarkedText() }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            (window as? UtilityPanel)?.sourceEditor = self
+        }
+
+        override func becomeFirstResponder() -> Bool {
+            guard super.becomeFirstResponder() else { return false }
+            onFocusChange?(true)
+            return true
+        }
+
+        override func resignFirstResponder() -> Bool {
+            guard super.resignFirstResponder() else { return false }
+            onFocusChange?(false)
+            return true
+        }
+
+        override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+            isSettingMarkedText = true
+            super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+            isSettingMarkedText = false
+            needsDisplay = true
+        }
+
+        override func unmarkText() {
+            let wasMarked = hasMarkedText()
+            super.unmarkText()
+            if wasMarked {
+                needsDisplay = true
+                onUnmark?()
+            }
+        }
+
+        override func draw(_ dirtyRect: CGRect) {
+            super.draw(dirtyRect)
+            guard showsPlaceholder, !placeholder.isEmpty else { return }
+            let origin = textContainerOrigin
+            let leading = origin.x + (textContainer?.lineFragmentPadding ?? 0)
+            let rect = CGRect(x: leading, y: origin.y, width: max(0, bounds.width - leading * 2), height: bounds.height - origin.y)
+            (placeholder as NSString).draw(with: rect, options: .usesLineFragmentOrigin, attributes: [
+                .font: font ?? NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.secondaryLabelColor
+            ])
+        }
     }
 }
 
@@ -510,6 +590,10 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("翻译服务") {
+                Picker("原文语言", selection: $model.source) {
+                    Text("自动检测").tag(nil as Language?)
+                    ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
+                }
                 Picker("译文语言", selection: $model.target) {
                     Text("自动选择").tag(nil as Language?)
                     ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
