@@ -474,24 +474,19 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("翻译") {
+            Section("翻译服务") {
                 Picker("译文语言", selection: $model.target) {
                     Text("自动选择").tag(nil as Language?)
                     ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
                 }
-                if model.target == nil {
-                    Text("自动选择会将中文译为英语，其它语言译为简体中文。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("翻译服务") {
                 ForEach(Provider.allCases) { provider in
                     Toggle(provider.title, isOn: Binding(
                         get: { model.enabledProviders.contains(provider) },
                         set: { model.setEnabled($0, for: provider) }
                     ))
+                }
+                if model.enabledProviders.contains(.volcengine) {
+                    Link("机器翻译开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!)
                 }
             }
 
@@ -522,7 +517,6 @@ struct SettingsView: View {
                         .disabled(accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   || secretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                Link("开通与计费", destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!)
             }
 
             Section("快捷键") {
