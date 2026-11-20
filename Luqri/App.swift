@@ -409,6 +409,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.contentViewController = controller
             window.initialFirstResponder = controller.view
             window.title = "Luqri 设置"
+            window.addTitlebarAccessoryViewController(settingsIconAccessory())
             window.collectionBehavior = [.managed, .primary]
             window.isReleasedWhenClosed = false
             window.delegate = self
@@ -424,6 +425,24 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let frame, window.frame != frame {
             window.setFrame(frame, display: true)
         }
+    }
+
+    private func settingsIconAccessory() -> NSTitlebarAccessoryViewController {
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .left
+        let container = NSView(frame: CGRect(x: 0, y: 0, width: 24, height: 16))
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16)
+        ])
+        accessory.view = container
+        return accessory
     }
 
     private func focusSettings(_ window: NSWindow) {
