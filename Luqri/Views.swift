@@ -1,6 +1,4 @@
 import AppKit
-import AVFoundation
-import NaturalLanguage
 import SwiftUI
 import Translation
 
@@ -127,7 +125,7 @@ struct TranslationView: View {
     @State private var collapsedProviders = Set<Provider>()
     @State private var copiedSource = false
     @State private var copiedResult: Provider?
-    @State private var speaker: AVSpeechSynthesizer?
+    @State private var speech: SpeechPlayback?
     @State private var showEmptyClipboardHint = false
 
     let needsSelectionPermission: Bool
@@ -154,6 +152,12 @@ struct TranslationView: View {
         VStack(alignment: .leading, spacing: 8) {
             header
             editor
+            if let error = speech?.error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if !hasText && needsSelectionPermission {
                 notice("读取选中文字需授权辅助功能", action: "打开系统设置") { Permissions.openAccessibility() }
             } else if !hasText && showEmptyClipboardHint {
@@ -177,17 +181,20 @@ struct TranslationView: View {
                 .allowsHitTesting(false)
         }
         .onGeometryChange(for: CGSize.self, of: \.size, action: resize)
-        .onDisappear { speaker?.stopSpeaking(at: .immediate) }
+        .onDisappear { speech?.stop() }
         .onChange(of: model.text) {
             copiedSource = false
             if hasText { showEmptyClipboardHint = false }
-            speaker?.stopSpeaking(at: .immediate)
+            speech?.stop()
         }
         .onChange(of: model.isTranslating) {
             if model.isTranslating { collapsedProviders.removeAll() }
         }
         .onChange(of: model.enabledProviders) {
             collapsedProviders.formIntersection(model.enabledProviders)
+            if case .translation(let provider) = speech?.playing, !model.enabledProviders.contains(provider) {
+                speech?.stop()
+            }
         }
         .onExitCommand(perform: close)
         .background {
@@ -254,7 +261,7 @@ struct TranslationView: View {
             .frame(height: TranslationEditor.height)
 
             HStack(spacing: 3) {
-                iconButton("volume-2", label: "朗读原文", action: speak)
+                speechButton(.source, text: model.text, language: model.source)
                     .disabled(!hasText)
                 iconButton(copiedSource ? "check" : "copy", label: copiedSource ? "已复制" : "复制原文") {
                     Clipboard.write(model.text)
@@ -304,6 +311,7 @@ struct TranslationView: View {
             Button {
                 if expanded {
                     collapsedProviders.insert(provider)
+                    if speech?.playing == .translation(provider) { speech?.stop() }
                 } else {
                     collapsedProviders.remove(provider)
                 }
@@ -331,6 +339,7 @@ struct TranslationView: View {
         .background(card)
         .onChange(of: output) {
             if copiedResult == provider { copiedResult = nil }
+            if speech?.playing == .translation(provider) { speech?.stop() }
         }
     }
 
@@ -341,12 +350,15 @@ struct TranslationView: View {
                 LoadingIndicator(title: "正在翻译")
             case .failed(let error):
                 readableOutput(error)
-            case .translated(let text):
+            case .translated(let text, let language):
                 readableOutput(text)
                 let copied = copiedResult == provider
-                iconButton(copied ? "check" : "copy", label: copied ? "已复制" : "复制译文") {
-                    Clipboard.write(text)
-                    copiedResult = provider
+                HStack(spacing: 3) {
+                    speechButton(.translation(provider), text: text, language: language)
+                    iconButton(copied ? "check" : "copy", label: copied ? "已复制" : "复制译文") {
+                        Clipboard.write(text)
+                        copiedResult = provider
+                    }
                 }
             case .idle:
                 Text("按 ⌘↩ 翻译").foregroundStyle(.secondary)
@@ -399,17 +411,14 @@ struct TranslationView: View {
         model.begin(with: input)
     }
 
-    private func speak() {
-        let synthesizer = speaker ?? AVSpeechSynthesizer()
-        speaker = synthesizer
-        if synthesizer.isSpeaking {
-            synthesizer.stopSpeaking(at: .immediate)
-            return
+    private func speechButton(_ item: SpeechPlayback.Item, text: String, language: Language?) -> some View {
+        let playing = speech?.playing == item
+        let label = item == .source ? "朗读原文" : "朗读译文"
+        return iconButton(playing ? "square" : "volume-2", label: playing ? "停止\(label)" : label) {
+            let playback = speech ?? SpeechPlayback()
+            speech = playback
+            playback.toggle(item, text: text, language: language)
         }
-        let utterance = AVSpeechUtterance(string: model.text)
-        let language = model.source?.rawValue ?? NLLanguageRecognizer.dominantLanguage(for: String(model.text.prefix(512)))?.rawValue
-        if let language { utterance.voice = AVSpeechSynthesisVoice(language: language) }
-        synthesizer.speak(utterance)
     }
 }
 

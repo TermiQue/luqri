@@ -68,7 +68,7 @@ struct TranslationJob {
 }
 
 enum TranslationOutput: Equatable {
-    case idle, translating, translated(String), failed(String)
+    case idle, translating, translated(String, language: Language), failed(String)
 }
 
 @MainActor
@@ -246,7 +246,7 @@ final class TranslationModel {
         if job.provider == .volcengine { cloudTask = nil }
         switch outcome {
         case .success(let translation):
-            outputs[job.provider] = .translated(translation)
+            outputs[job.provider] = .translated(translation, language: job.target)
         case .failure(let error):
             outputs[job.provider] = .failed(Self.message(for: error))
         }
