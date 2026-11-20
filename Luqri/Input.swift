@@ -60,7 +60,7 @@ struct Shortcut: Codable, Equatable {
     }
 
     static func isSettingsEvent(_ event: NSEvent) -> Bool {
-        hasCommandOnly(event) && [",", "，"].contains(event.charactersIgnoringModifiers ?? "")
+        [",", "，"].contains(commandKey(for: event) ?? "")
     }
 
     static func isEscapeEvent(_ event: NSEvent) -> Bool {
@@ -68,14 +68,19 @@ struct Shortcut: Codable, Equatable {
     }
 
     static func isPasteEvent(_ event: NSEvent) -> Bool {
-        hasCommandOnly(event) && event.charactersIgnoringModifiers?.lowercased() == "v"
+        commandKey(for: event) == "v"
     }
 
-    private static func hasCommandOnly(_ event: NSEvent) -> Bool {
-        event.modifierFlags.intersection([.control, .option, .shift, .command]) == .command
+    static func commandKey(for event: NSEvent) -> String? {
+        guard event.modifierFlags.intersection([.control, .option, .shift, .command]) == .command else { return nil }
+        return event.charactersIgnoringModifiers?.lowercased()
     }
 
     var isSettingsShortcut: Bool { key == "," && modifiers == UInt32(cmdKey) }
+
+    var isReservedApplicationShortcut: Bool {
+        modifierFlags == .command && [",", "a", "c", "h", "m", "q", "v", "w", "x", "z", "\r"].contains(key)
+    }
 
     func usesSameKeys(as other: Self) -> Bool {
         keyCode == other.keyCode && modifiers == other.modifiers
@@ -229,7 +234,7 @@ final class GlobalShortcuts {
             message = "⌘, 已用于打开设置，请选用其他组合。"
             return
         }
-        if shortcut.modifierFlags == .command && ["a", "c", "v", "x", "z", "\r"].contains(shortcut.key) {
+        if shortcut.isReservedApplicationShortcut {
             message = "该组合用于应用内操作，请选用其他组合。"
             return
         }
@@ -283,6 +288,10 @@ final class GlobalShortcuts {
         }
         for command in custom + Command.allCases.filter({ !custom.contains($0) }) {
             let shortcut = bindings[command] ?? command.defaultShortcut
+            guard !shortcut.isReservedApplicationShortcut else {
+                failed.insert(command)
+                continue
+            }
             var reference: EventHotKeyRef?
             let id = EventHotKeyID(signature: Self.signature, id: command.rawValue)
             let result = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, id,

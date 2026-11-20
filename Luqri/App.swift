@@ -36,7 +36,7 @@ enum Permissions {
 }
 
 @MainActor
-final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     private let model = TranslationModel()
     private let screenshotCapture = ScreenshotCapture()
     private var statusItem: NSStatusItem?
@@ -72,7 +72,25 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if !event.isARepeat { showSettings() }
             return nil
         }
-        if let window = settingsWindow, (event.window ?? NSApp.keyWindow) === window {
+        let window = event.window ?? NSApp.keyWindow
+        if let key = Shortcut.commandKey(for: event) {
+            switch key {
+            case "w" where canClose(window):
+                if !event.isARepeat { closeWindow(window) }
+                return nil
+            case "m" where window != nil && window === settingsWindow:
+                if !event.isARepeat { window?.performMiniaturize(nil) }
+                return nil
+            case "h":
+                if !event.isARepeat { NSApp.hide(nil) }
+                return nil
+            case "q":
+                if !event.isARepeat { quit() }
+                return nil
+            default: break
+            }
+        }
+        if let window, window === settingsWindow {
             if Shortcut.isEscapeEvent(event) {
                 if !event.isARepeat { window.performClose(nil) }
                 return nil
@@ -152,8 +170,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let settings = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         appMenu.addItem(settings)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "隐藏 Luqri", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h").target = NSApp
+        appMenu.addItem(withTitle: "退出 Luqri", action: #selector(quit), keyEquivalent: "q").target = self
         appItem.submenu = appMenu
         menu.addItem(appItem)
+
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "文件")
+        fileMenu.addItem(withTitle: "关闭", action: #selector(closeFrontWindow), keyEquivalent: "w").target = self
+        fileItem.submenu = fileMenu
+        menu.addItem(fileItem)
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "编辑")
@@ -167,7 +194,40 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
         menu.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "窗口")
+        windowMenu.addItem(withTitle: "最小化", action: #selector(minimizeSettings), keyEquivalent: "m").target = self
+        windowItem.submenu = windowMenu
+        menu.addItem(windowItem)
         NSApp.mainMenu = menu
+        NSApp.windowsMenu = windowMenu
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let window = NSApp.keyWindow
+        switch menuItem.action {
+        case #selector(closeFrontWindow): return canClose(window)
+        case #selector(minimizeSettings): return window != nil && window === settingsWindow
+        default: return true
+        }
+    }
+
+    private func canClose(_ window: NSWindow?) -> Bool {
+        guard let window, window.attachedSheet == nil else { return false }
+        return window === settingsWindow || window === translationPanel
+    }
+
+    private func closeWindow(_ window: NSWindow?) {
+        guard let window else { return }
+        if window === translationPanel { closeTranslation() }
+        else if window === settingsWindow { window.performClose(nil) }
+    }
+
+    @objc private func closeFrontWindow() { closeWindow(NSApp.keyWindow) }
+
+    @objc private func minimizeSettings() {
+        if let window = NSApp.keyWindow, window === settingsWindow { window.performMiniaturize(nil) }
     }
 
     private func addItem(
@@ -186,21 +246,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
-
-    func runShortcut(_ command: Command, text: String? = nil) async {
-        if command == .translate, let text, text.hasNonWhitespace {
-            cancelWork()
-            showTranslation(text)
-            return
-        }
-        perform(command)
-        let job = work
-        await withTaskCancellationHandler {
-            await job?.value
-        } onCancel: {
-            job?.cancel()
-        }
-    }
 
     private func perform(_ command: Command) {
         cancelWork()
