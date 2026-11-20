@@ -83,6 +83,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let applicationKeyMonitor { NSEvent.removeMonitor(applicationKeyMonitor) }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        translationPanel?.finishInitialPresentation()
+    }
+
     func applicationDidResignActive(_ notification: Notification) {
         shortcuts?.cancelRecording()
     }
@@ -175,7 +179,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.showFeedback("已复制识别文字", icon: "check", at: anchor)
             }
         case .screenshotTranslate:
-            recognizeScreenshot { [weak self] text, _ in
+            recognizeScreenshot(keepsFocus: true) { [weak self] text, _ in
                 self?.showTranslation(text)
             }
         }
@@ -211,7 +215,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func recognizeScreenshot(deliver: @escaping (String, CGPoint) -> Void) {
+    private func recognizeScreenshot(keepsFocus: Bool = false, deliver: @escaping (String, CGPoint) -> Void) {
+        let previousApp = keepsFocus ? NSWorkspace.shared.frontmostApplication : nil
         closeTranslation()
         let provider = OCRProvider.selected()
         work = Task(priority: .userInitiated) { [weak self] in
@@ -219,7 +224,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var anchor = NSEvent.mouseLocation
             defer { if !Task.isCancelled { self.work = nil } }
             do {
-                guard let screenshot = try await self.screenshotCapture.capture() else { return }
+                guard let screenshot = try await self.screenshotCapture.capture(keepsFocus: keepsFocus) else { return }
                 try Task.checkCancellation()
                 let recognitionAnchor = screenshot.anchor
                 anchor = recognitionAnchor
@@ -237,6 +242,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } catch {
                 guard !Task.isCancelled else { return }
                 self.stopOCRProgress()
+                ScreenshotCapture.restoreFocus(to: previousApp)
                 let message = (error as? LocalizedError)?.errorDescription ?? "截图或识别失败，请重新框选。"
                 self.showFeedback(message, icon: "x", at: anchor)
             }
@@ -273,7 +279,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.hasShadow = true
         panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false
-        panel.hidesOnDeactivate = true
+        panel.hidesOnDeactivate = false
+        panel.hidesOnDeactivateAfterFirstKey = true
         panel.isMovableByWindowBackground = true
         panel.title = "Luqri 翻译"
         panel.onEscape = { [weak self] in self?.closeTranslation() }
@@ -288,7 +295,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model: model, isPanelKey: { [weak panel] in panel?.isKeyWindow == true },
             close: { [weak self] in self?.closeTranslation() },
             openSettings: { [weak self] in self?.showSettings() },
-            setPinned: { [weak panel] pinned in panel?.hidesOnDeactivate = !pinned },
+            setPinned: { [weak panel] pinned in
+                panel?.hidesOnDeactivateAfterFirstKey = false
+                panel?.hidesOnDeactivate = !pinned
+            },
             resize: { [weak self, weak panel] size in
                 Task { @MainActor in
                     guard let self, let panel, self.translationPanel === panel else { return }
@@ -308,6 +318,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.center()
         }
         translationPanel = panel
+        panel.orderFrontRegardless()
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
     }

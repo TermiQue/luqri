@@ -22,33 +22,42 @@ final class ScreenshotCapture {
     private let overlay = SelectionOverlay()
     private var selectionID: UUID?
 
-    func capture() async throws -> Screenshot? {
+    func capture(keepsFocus: Bool = false) async throws -> Screenshot? {
         try Task.checkCancellation()
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
             throw Failure.permissionDenied
         }
-        guard let selection = try await selectRegion() else { return nil }
+        guard let selection = try await selectRegion(keepsFocus: keepsFocus) else { return nil }
         let image = try await Self.captureImage(selection)
         try Task.checkCancellation()
         return Screenshot(image: image, anchor: selection.anchor)
     }
 
     func cancelSelection() {
+        selectionID = nil
         overlay.cancel()
     }
 
-    private func selectRegion() async throws -> ScreenSelection? {
+    static func restoreFocus(to app: NSRunningApplication?) {
+        guard NSApp.isActive, let app, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        NSApp.yieldActivation(to: app)
+        app.activate()
+    }
+
+    private func selectRegion(keepsFocus: Bool) async throws -> ScreenSelection? {
         let id = UUID()
         let selection = try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return await withCheckedContinuation { continuation in
-                overlay.cancel()
+                cancelSelection()
                 selectionID = id
                 let previousApp = NSWorkspace.shared.frontmostApplication
                 overlay.begin { [weak self] selection in
-                    self?.selectionID = nil
-                    if let previousApp, previousApp.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-                        previousApp.activate()
+                    if let self, self.selectionID == id {
+                        self.selectionID = nil
+                        if !keepsFocus || selection == nil {
+                            Self.restoreFocus(to: previousApp)
+                        }
                     }
                     continuation.resume(returning: selection)
                 }
