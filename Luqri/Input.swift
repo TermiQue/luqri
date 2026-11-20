@@ -315,10 +315,15 @@ final class GlobalShortcuts {
 }
 
 enum SelectedText {
-    static func read(from pid: pid_t, at point: CGPoint) async -> String? {
-        guard !Task.isCancelled else { return nil }
+    enum Result {
+        case text(String), unavailable, protected
+    }
+
+    static func read(from pid: pid_t, at point: CGPoint) async -> Result {
+        guard !Task.isCancelled else { return .protected }
         var query = SelectionQuery(pid: pid)
-        return query.read(at: point)
+        if let selection = query.read(at: point) { return .text(selection) }
+        return query.encounteredSecureField ? .protected : .unavailable
     }
 }
 
@@ -331,6 +336,7 @@ private struct SelectionQuery {
     let pid: pid_t
     private let deadline = ContinuousClock.now + .milliseconds(450)
     private var visited: Set<AXUIElement> = []
+    private(set) var encounteredSecureField = false
 
     init(pid: pid_t) { self.pid = pid }
 
@@ -404,8 +410,10 @@ private struct SelectionQuery {
         return nil
     }
 
-    private func isSecure(_ element: AXUIElement) -> Bool {
-        attribute(element, kAXSubroleAttribute) as? String == kAXSecureTextFieldSubrole
+    private mutating func isSecure(_ element: AXUIElement) -> Bool {
+        guard attribute(element, kAXSubroleAttribute) as? String == kAXSecureTextFieldSubrole else { return false }
+        encounteredSecureField = true
+        return true
     }
 
     private func textSelection(in element: AXUIElement) -> String? {
@@ -537,7 +545,56 @@ private struct SelectionQuery {
 
 @MainActor
 enum Clipboard {
+    private static var selectionCopy: Task<String?, Never>?
+    fileprivate static let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+
     static var text: String { NSPasteboard.general.string(forType: .string) ?? "" }
+
+    static func copySelection(from pid: pid_t) async -> String? {
+        while let selectionCopy {
+            _ = await selectionCopy.value
+            guard !Task.isCancelled else { return nil }
+        }
+        guard !Task.isCancelled, !IsSecureEventInputEnabled(),
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, CGPreflightPostEventAccess(),
+              let source = CGEventSource(stateID: .privateState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: false) else { return nil }
+
+        let pasteboard = NSPasteboard.general
+        if #available(macOS 15.4, *), pasteboard.accessBehavior == .alwaysDeny { return nil }
+        guard let snapshot = PasteboardSnapshot(pasteboard) else { return nil }
+
+        // Once the key has been sent, finish restoring the clipboard even if the
+        // caller cancels the translation or starts a different command.
+        let copy = Task<String?, Never> {
+            defer { selectionCopy = nil }
+            guard pasteboard.changeCount == snapshot.changeCount, !IsSecureEventInputEnabled(),
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return nil }
+            down.flags = .maskCommand
+            up.flags = .maskCommand
+            down.postToPid(pid)
+            up.postToPid(pid)
+
+            let deadline = ContinuousClock.now + .milliseconds(350)
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(15))
+                let count = pasteboard.changeCount
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                      !IsSecureEventInputEnabled() else { return nil }
+                if count == snapshot.changeCount { continue }
+                guard count == snapshot.changeCount + 1 else { return nil }
+                guard let types = pasteboard.types, !types.isEmpty else { continue }
+                let copied = types.contains(concealed) || types.contains(.fileURL)
+                    ? nil : pasteboard.string(forType: .string)
+                guard snapshot.restore(to: pasteboard, replacing: count) else { return nil }
+                return copied.flatMap { $0.hasNonWhitespace ? $0 : nil }
+            }
+            return nil
+        }
+        selectionCopy = copy
+        return await copy.value
+    }
 
     static func credentialText(from pasteboard: NSPasteboard = .general) -> String? {
         let text = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -554,5 +611,43 @@ enum Clipboard {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+}
+
+@MainActor
+private struct PasteboardSnapshot {
+    private static let unsafeTypes: Set<NSPasteboard.PasteboardType> = [
+        Clipboard.concealed, .init("org.nspasteboard.TransientType"), .init("com.apple.pasteboard.promised-file-url"),
+        .init("com.apple.pasteboard.promised-file-content-type")
+    ]
+
+    let changeCount: Int
+    private let items: [NSPasteboardItem]
+
+    init?(_ pasteboard: NSPasteboard) {
+        changeCount = pasteboard.changeCount
+        guard let types = pasteboard.types,
+              let originals = pasteboard.pasteboardItems ?? (types.isEmpty ? [] : nil) else { return nil }
+        var copies: [NSPasteboardItem] = []
+        var remainingBytes = 8 * 1024 * 1024
+        for original in originals {
+            let types = original.types
+            guard !types.isEmpty, Self.unsafeTypes.isDisjoint(with: types) else { return nil }
+            let copy = NSPasteboardItem()
+            for type in types {
+                guard let data = original.data(forType: type), data.count <= remainingBytes,
+                      copy.setData(data, forType: type) else { return nil }
+                remainingBytes -= data.count
+            }
+            copies.append(copy)
+        }
+        guard pasteboard.changeCount == changeCount else { return nil }
+        items = copies
+    }
+
+    func restore(to pasteboard: NSPasteboard, replacing count: Int) -> Bool {
+        guard pasteboard.changeCount == count else { return false }
+        pasteboard.clearContents()
+        return items.isEmpty || pasteboard.writeObjects(items)
     }
 }

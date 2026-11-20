@@ -298,7 +298,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         let top = NSScreen.screens.first?.frame.maxY ?? CGDisplayBounds(CGMainDisplayID()).height
         let point = CGPoint(x: mouse.x, y: top - mouse.y)
         work = Task(priority: .userInitiated) { [weak self] in
-            let text = await SelectedText.read(from: pid, at: point)
+            let text: String?
+            switch await SelectedText.read(from: pid, at: point) {
+            case let .text(selection): text = selection
+            case .unavailable: text = await Clipboard.copySelection(from: pid)
+            case .protected: text = nil
+            }
             guard let self, !Task.isCancelled else { return }
             self.work = nil
             let selection = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid ? text : nil
