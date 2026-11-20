@@ -149,10 +149,31 @@ private final class SelectionOverlay {
 
     private var windows: [UtilityPanel] = []
     private var completion: ((ScreenSelection?) -> Void)?
+    private var activationTask: Task<Void, Never>?
     private var hasSelectionCursor = false
 
     func begin(completion: @escaping (ScreenSelection?) -> Void) {
         self.completion = completion
+        if NSApp.isActive {
+            show()
+            return
+        }
+
+        // A global shortcut can arrive while a different app owns the system cursor.
+        activationTask = Task { [weak self] in
+            guard !Task.isCancelled else { return }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.addsToRecentItems = false
+            configuration.allowsRunningApplicationSubstitution = false
+            _ = try? await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+            guard !Task.isCancelled, let self else { return }
+            self.activationTask = nil
+            self.show()
+        }
+    }
+
+    private func show() {
         let mouse = NSEvent.mouseLocation
         for screen in NSScreen.screens {
             guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
@@ -196,6 +217,8 @@ private final class SelectionOverlay {
     }
 
     private func finish(_ selection: ScreenSelection?) {
+        activationTask?.cancel()
+        activationTask = nil
         let callback = completion
         completion = nil
         for window in windows { window.orderOut(nil) }
@@ -257,9 +280,6 @@ private final class SelectionView: NSView {
         }
         layer = root
         wantsLayer = true
-        addTrackingArea(NSTrackingArea(
-            rect: .zero, options: [.cursorUpdate, .inVisibleRect, .activeInActiveApp], owner: self, userInfo: nil
-        ))
         updateLayers()
     }
 
@@ -268,8 +288,8 @@ private final class SelectionView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func cursorUpdate(with event: NSEvent) {
-        if window?.isVisible == true { SelectionOverlay.cursor.set() }
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: SelectionOverlay.cursor)
     }
 
     override func layout() {
