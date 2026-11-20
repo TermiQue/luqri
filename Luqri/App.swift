@@ -107,7 +107,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard let window = settingsWindow else { return true }
-        focusSettings(window)
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
         return false
     }
 
@@ -414,7 +415,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.contentViewController = controller
             window.initialFirstResponder = controller.view
             window.title = "Luqri 设置"
-            window.collectionBehavior = [.managed, .primary]
+            window.collectionBehavior = [.managed, .primary, .moveToActiveSpace]
             window.isReleasedWhenClosed = false
             window.delegate = self
             settingsWindow = window
@@ -446,7 +447,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.orderFrontRegardless()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
-        if NSApp.isActive, window.isKeyWindow { settingsAwaitingFocus = nil }
+        if NSApp.isActive {
+            if window.isKeyWindow { settingsAwaitingFocus = nil }
+        } else {
+            // A status menu action may run while another application still owns activation.
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.addsToRecentItems = false
+            configuration.allowsRunningApplicationSubstitution = false
+            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+        }
     }
 
     private func settingsFrame(for window: NSWindow, screen: CGRect, visible: CGRect) -> CGRect {
