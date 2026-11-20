@@ -1,14 +1,29 @@
 import AppKit
 import ApplicationServices
+import ImageIO
 import SwiftUI
 
 @main
 @MainActor
 enum LuqriApp {
-    static func loadBundledIcon() -> NSImage? {
+    static func loadDockIcon(size: NSSize) -> NSImage? {
         guard let iconFile = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
-              let url = Bundle.main.url(forResource: iconFile, withExtension: nil) else { return nil }
-        return NSImage(contentsOf: url)
+              let url = Bundle.main.url(forResource: iconFile, withExtension: nil),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let pixelSize = max(1, Int(ceil(max(size.width, size.height) * 2)))
+        var index = 0
+        var bestWidth = Int.max
+        for candidate in 0..<CGImageSourceGetCount(source) {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(source, candidate, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  width >= pixelSize, width < bestWidth else { continue }
+            index = candidate
+            bestWidth = width
+        }
+        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                       kCGImageSourceThumbnailMaxPixelSize: pixelSize] as CFDictionary
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, options) else { return nil }
+        return NSImage(cgImage: image, size: size)
     }
 
     static func main() {
@@ -482,12 +497,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         settingsAwaitingFocus = window
         if NSApp.activationPolicy() != .regular, NSApp.setActivationPolicy(.regular) {
             let tile = NSApp.dockTile
-            let icon = NSImageView(frame: CGRect(origin: .zero, size: tile.size))
-            if let artwork = LuqriApp.loadBundledIcon() { NSApp.applicationIconImage = artwork }
-            icon.image = NSApp.applicationIconImage
-            icon.imageScaling = .scaleProportionallyUpOrDown
-            icon.autoresizingMask = [.width, .height]
-            tile.contentView = icon
+            if tile.contentView == nil, let artwork = LuqriApp.loadDockIcon(size: tile.size) {
+                let icon = NSImageView(frame: CGRect(origin: .zero, size: tile.size))
+                icon.image = artwork
+                icon.imageScaling = .scaleProportionallyUpOrDown
+                icon.autoresizingMask = [.width, .height]
+                NSApp.applicationIconImage = artwork
+                tile.contentView = icon
+            }
             tile.display()
         }
         if window.isMiniaturized { window.deminiaturize(nil) }
@@ -522,8 +539,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             settingsAwaitingFocus = nil
             settingsWindow = nil
             NSApp.setActivationPolicy(.accessory)
-            NSApp.dockTile.contentView = nil
-            NSApp.applicationIconImage = nil
         }
     }
 
