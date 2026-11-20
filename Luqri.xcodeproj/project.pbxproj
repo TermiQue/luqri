@@ -17,6 +17,7 @@
 		1A2B3C4D00000000000000CE /* Icons in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006A /* Icons */; };
 		1A2B3C4D00000000000000CF /* Lucide-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */; };
 		1A2B3C4D00000000000000D2 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006F /* AppIcon.icns */; };
+		1A2B3C4D00000000000000D3 /* ShortcutActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000070 /* ShortcutActions.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +33,7 @@
 		1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Lucide-LICENSE.txt"; sourceTree = "<group>"; };
 		1A2B3C4D000000000000006C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info.plist"; sourceTree = "<group>"; };
 		1A2B3C4D000000000000006F /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000070 /* ShortcutActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutActions.swift; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000005 /* Luqri.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Luqri.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -55,6 +57,7 @@
 			children = (
 				1A2B3C4D0000000000000064 /* App.swift */,
 				1A2B3C4D0000000000000065 /* Input.swift */,
+				1A2B3C4D0000000000000070 /* ShortcutActions.swift */,
 				1A2B3C4D0000000000000066 /* ScreenOCR.swift */,
 				1A2B3C4D000000000000006D /* Screenshot.swift */,
 				1A2B3C4D000000000000006E /* VolcengineOCR.swift */,
@@ -130,6 +133,7 @@
 			files = (
 				1A2B3C4D00000000000000C8 /* App.swift in Sources */,
 				1A2B3C4D00000000000000C9 /* Input.swift in Sources */,
+				1A2B3C4D00000000000000D3 /* ShortcutActions.swift in Sources */,
 				1A2B3C4D00000000000000CA /* ScreenOCR.swift in Sources */,
 				1A2B3C4D00000000000000D0 /* Screenshot.swift in Sources */,
 				1A2B3C4D00000000000000D1 /* VolcengineOCR.swift in Sources */,

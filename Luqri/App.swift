@@ -181,6 +181,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quit() { NSApp.terminate(nil) }
 
+    func runShortcut(_ command: Command, text: String? = nil) async {
+        if command == .translate, let text, text.hasNonWhitespace {
+            cancelWork()
+            showTranslation(text)
+            return
+        }
+        perform(command)
+        let job = work
+        await withTaskCancellationHandler {
+            await job?.value
+        } onCancel: {
+            job?.cancel()
+        }
+    }
+
     private func perform(_ command: Command) {
         cancelWork()
         switch command {
