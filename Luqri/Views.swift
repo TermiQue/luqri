@@ -663,7 +663,7 @@ struct SettingsView: View {
                 }
                 ForEach(Provider.allCases) { provider in
                     LabeledContent {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 11) {
                             if provider == .volcengine { translationUsageRing }
                             Toggle(provider.title, isOn: Binding(
                                 get: { model.enabledProviders.contains(provider) },
@@ -784,7 +784,7 @@ struct SettingsView: View {
     private var translationUsageRing: some View {
         ZStack {
             if case .loaded(let usage) = usageState {
-                Circle().strokeBorder(Color(nsColor: .darkGray), lineWidth: 3.5)
+                Circle().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 3.5)
                 Circle()
                     .inset(by: 1.75)
                     .trim(from: 0, to: usage.fractionUsed)
@@ -795,8 +795,8 @@ struct SettingsView: View {
             }
         }
         .frame(width: 16, height: 16)
-        .contentShape(Rectangle())
-        .help(usageState.detail)
+        .frame(width: 22, height: 22)
+        .overlay { UsageTooltip(text: usageState.detail) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("机器翻译月用量")
         .accessibilityValue(usageState.detail)
@@ -886,6 +886,18 @@ struct SettingsView: View {
         } catch {
             status = error.localizedDescription
         }
+    }
+}
+
+private struct UsageTooltip: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSView {
+        NSView()
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        if view.toolTip != text { view.toolTip = text }
     }
 }
 
