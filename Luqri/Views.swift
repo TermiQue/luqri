@@ -622,24 +622,34 @@ private struct LoadingIndicator: View {
 
 struct SettingsView: View {
     static let preferredSize = CGSize(width: 466, height: 590)
+    private static let usageHoverWidth: CGFloat = 22
 
     private enum UsageState {
-        case loading, missingCredentials
+        case loading(TranslationUsage?), missingCredentials
         case loaded(TranslationUsage)
-        case failed(String)
+        case failed(TranslationUsage?, String)
+
+        var usage: TranslationUsage? {
+            switch self {
+            case .loading(let usage), .failed(let usage, _): usage
+            case .loaded(let usage): usage
+            case .missingCredentials: nil
+            }
+        }
 
         var detail: String {
             switch self {
             case .loading: "正在查询本月机器翻译用量…"
             case .missingCredentials: "保存火山引擎密钥后可查询本月用量。"
             case .loaded(let usage): usage.detail
-            case .failed(let message): "无法查询本月用量。\n\(message)"
+            case .failed(_, let message): "无法查询本月用量。\n\(message)"
             }
         }
     }
 
     @Bindable var model: TranslationModel
     let shortcuts: GlobalShortcuts
+    let usageCache: TranslationUsageCache
     let requestPermission: (AppPermission) -> Void
     @AppStorage(OCRProvider.preferenceKey) private var ocrProvider = OCRProvider.appleVision
     @State private var accessKey = ""
@@ -647,8 +657,11 @@ struct SettingsView: View {
     @State private var status = ""
     @State private var hasCredentials = false
     @State private var grantedPermissions: Set<AppPermission> = []
-    @State private var usageState = UsageState.loading
+    @State private var usageState = UsageState.loading(nil)
     @State private var usageRefreshID = 0
+    @State private var isUsageHovered = false
+
+    private var isVolcengineEnabled: Bool { model.enabledProviders.contains(.volcengine) }
 
     var body: some View {
         Form {
@@ -664,21 +677,26 @@ struct SettingsView: View {
                 ForEach(Provider.allCases) { provider in
                     LabeledContent {
                         HStack(spacing: 11) {
-                            if provider == .volcengine { translationUsageRing }
+                            if provider == .volcengine, isVolcengineEnabled { translationUsageRing }
                             Toggle(provider.title, isOn: Binding(
                                 get: { model.enabledProviders.contains(provider) },
                                 set: { model.setEnabled($0, for: provider) }
                             ))
                             .labelsHidden()
                         }
+                        .frame(minHeight: provider == .volcengine ? 22 : nil)
                     } label: {
                         HStack(spacing: 10) {
                             Text(provider.title)
-                            if provider == .volcengine, model.enabledProviders.contains(provider) {
+                            if provider == .volcengine {
                                 billingLink(
                                     "机器翻译开通与计费",
                                     destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!
                                 )
+                                .opacity(isVolcengineEnabled ? 1 : 0)
+                                .allowsHitTesting(isVolcengineEnabled)
+                                .disabled(!isVolcengineEnabled)
+                                .accessibilityHidden(!isVolcengineEnabled)
                             }
                         }
                     }
@@ -778,44 +796,76 @@ struct SettingsView: View {
                 status = error.localizedDescription
             }
         }
-        .task(id: usageRefreshID) { await refreshTranslationUsage() }
+        .background {
+            if isVolcengineEnabled {
+                Color.clear.task(id: usageRefreshID) { await refreshTranslationUsage() }
+            }
+        }
     }
 
     private var translationUsageRing: some View {
         ZStack {
-            if case .loaded(let usage) = usageState {
-                Circle().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 3.5)
+            Circle().strokeBorder(Color.primary.opacity(0.16), lineWidth: 3.5)
+            if let usage = usageState.usage {
                 Circle()
                     .inset(by: 1.75)
                     .trim(from: 0, to: usage.fractionUsed)
                     .stroke(.white, lineWidth: 2.5)
                     .rotationEffect(.degrees(-90))
-            } else {
-                Circle().strokeBorder(.quaternary, lineWidth: 3.5)
             }
         }
         .frame(width: 16, height: 16)
-        .frame(width: 22, height: 22)
-        .overlay { UsageTooltip(text: usageState.detail) }
+        .frame(width: Self.usageHoverWidth, height: 22)
+        .contentShape(Rectangle())
+        .onHover { isUsageHovered = $0 }
+        .onDisappear { isUsageHovered = false }
+        .overlay(alignment: .trailing) {
+            if isUsageHovered {
+                Group {
+                    if case .loading = usageState {
+                        UsageLoadingDots()
+                    } else {
+                        Text(usageState.detail)
+                            .font(.caption)
+                            .lineLimit(2)
+                            .frame(maxWidth: 240, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .fixedSize()
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(.separator) }
+                .offset(x: -(Self.usageHoverWidth + 6))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("机器翻译月用量")
         .accessibilityValue(usageState.detail)
     }
 
     private func refreshTranslationUsage() async {
+        guard isVolcengineEnabled, !Task.isCancelled else { return }
         let refreshID = usageRefreshID
-        let result: UsageState
+        let now = Date.now
+        var cached: TranslationUsage?
         do {
-            if let credentials = try CloudCredentials.load() {
-                result = .loaded(try await Volcengine.translationUsage(credentials: credentials))
-            } else {
-                result = .missingCredentials
+            guard let credentials = try CloudCredentials.load() else {
+                usageState = .missingCredentials
+                return
             }
+            cached = usageCache.usage(for: credentials.accessKey, at: now)
+            usageState = .loading(cached)
+            let usage = try await Volcengine.translationUsage(credentials: credentials, now: now)
+            guard !Task.isCancelled, isVolcengineEnabled, refreshID == usageRefreshID else { return }
+            usageCache.store(usage, for: credentials.accessKey, at: now)
+            usageState = .loaded(usage)
         } catch {
-            result = .failed(error.localizedDescription)
+            guard !Task.isCancelled, isVolcengineEnabled, refreshID == usageRefreshID else { return }
+            usageState = .failed(cached, error.localizedDescription)
         }
-        guard !Task.isCancelled, refreshID == usageRefreshID else { return }
-        usageState = result
     }
 
     private func refreshPermissions() {
@@ -867,8 +917,7 @@ struct SettingsView: View {
             secretKey = secret
             hasCredentials = true
             status = "密钥已保存在本机。"
-            usageState = .loading
-            usageRefreshID += 1
+            if isVolcengineEnabled { usageRefreshID += 1 }
         } catch {
             status = error.localizedDescription
         }
@@ -881,23 +930,31 @@ struct SettingsView: View {
             secretKey = ""
             hasCredentials = false
             status = "密钥已移除。"
-            usageState = .missingCredentials
-            usageRefreshID += 1
+            usageCache.clear()
+            if isVolcengineEnabled {
+                usageState = .missingCredentials
+                usageRefreshID += 1
+            }
         } catch {
             status = error.localizedDescription
         }
     }
 }
 
-private struct UsageTooltip: NSViewRepresentable {
-    let text: String
+private struct UsageLoadingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    func makeNSView(context: Context) -> NSView {
-        NSView()
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        if view.toolTip != text { view.toolTip = text }
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.18, paused: reduceMotion)) { context in
+            let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.18) % 3
+            HStack(spacing: 4) {
+                ForEach(0..<3) { index in
+                    Circle().fill(.secondary)
+                        .frame(width: 4, height: 4)
+                        .opacity(reduceMotion || index == phase ? 1 : 0.35)
+                }
+            }
+        }
     }
 }
 

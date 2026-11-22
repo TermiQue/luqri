@@ -45,6 +45,7 @@ enum LuqriApp {
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     private let model = TranslationModel()
+    private let translationUsageCache = TranslationUsageCache()
     private let screenshotCapture = ScreenshotCapture()
     private var statusItem: NSStatusItem?
     private var shortcuts: GlobalShortcuts?
@@ -491,7 +492,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if let settingsWindow {
             window = settingsWindow
         } else {
-            let controller = NSHostingController(rootView: SettingsView(model: model, shortcuts: shortcuts) { [weak self] permission in
+            let controller = NSHostingController(rootView: SettingsView(
+                model: model, shortcuts: shortcuts, usageCache: translationUsageCache
+            ) { [weak self] permission in
                 self?.showPermissionPrompt(permission)
             })
             controller.sizingOptions = []

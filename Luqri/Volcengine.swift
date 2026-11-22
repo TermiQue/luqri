@@ -80,6 +80,24 @@ struct TranslationUsage: Sendable {
     }
 }
 
+@MainActor
+final class TranslationUsageCache {
+    private var entry: (accessKey: String, period: String, usage: TranslationUsage)?
+
+    func usage(for accessKey: String, at date: Date) -> TranslationUsage? {
+        guard let entry, entry.accessKey == accessKey, entry.period == Volcengine.billingPeriod(at: date) else {
+            return nil
+        }
+        return entry.usage
+    }
+
+    func store(_ usage: TranslationUsage, for accessKey: String, at date: Date) {
+        entry = (accessKey, Volcengine.billingPeriod(at: date), usage)
+    }
+
+    func clear() { entry = nil }
+}
+
 enum Volcengine {
     struct Operation: Sendable {
         static let translation = Operation(
@@ -328,11 +346,13 @@ extension Volcengine {
         calendar: Calendar(identifier: .gregorian)
     )
 
+    static func billingPeriod(at date: Date) -> String { date.formatted(billingMonth) }
+
     static func translationUsage(
         credentials: CloudCredentials, now: Date = .now,
         sendRequest: @Sendable (URLRequest) async throws -> (Data, Int) = send
     ) async throws -> TranslationUsage {
-        let month = now.formatted(billingMonth)
+        let month = billingPeriod(at: now)
         let pageSize = 100
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
