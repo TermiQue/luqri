@@ -1,4 +1,4 @@
-# Luqri
+# <img src="README/icon.png" width="48" height="48" alt=""> Luqri
 
 Luqri 是 macOS 原生的菜单栏翻译与文字识别工具，支持划词翻译、截图 OCR 和截图翻译。使用 Swift、AppKit 和 SwiftUI，翻译浮窗、截图和 OCR 均按需运行。
 
