@@ -623,6 +623,21 @@ private struct LoadingIndicator: View {
 struct SettingsView: View {
     static let preferredSize = CGSize(width: 466, height: 590)
 
+    private enum UsageState {
+        case loading, missingCredentials
+        case loaded(TranslationUsage)
+        case failed(String)
+
+        var detail: String {
+            switch self {
+            case .loading: "正在查询本月机器翻译用量…"
+            case .missingCredentials: "保存火山引擎密钥后可查询本月用量。"
+            case .loaded(let usage): usage.detail
+            case .failed(let message): "无法查询本月用量。\n\(message)"
+            }
+        }
+    }
+
     @Bindable var model: TranslationModel
     let shortcuts: GlobalShortcuts
     let requestPermission: (AppPermission) -> Void
@@ -632,6 +647,8 @@ struct SettingsView: View {
     @State private var status = ""
     @State private var hasCredentials = false
     @State private var grantedPermissions: Set<AppPermission> = []
+    @State private var usageState = UsageState.loading
+    @State private var usageRefreshID = 0
 
     var body: some View {
         Form {
@@ -646,11 +663,14 @@ struct SettingsView: View {
                 }
                 ForEach(Provider.allCases) { provider in
                     LabeledContent {
-                        Toggle(provider.title, isOn: Binding(
-                            get: { model.enabledProviders.contains(provider) },
-                            set: { model.setEnabled($0, for: provider) }
-                        ))
-                        .labelsHidden()
+                        HStack(spacing: 8) {
+                            if provider == .volcengine { translationUsageRing }
+                            Toggle(provider.title, isOn: Binding(
+                                get: { model.enabledProviders.contains(provider) },
+                                set: { model.setEnabled($0, for: provider) }
+                            ))
+                            .labelsHidden()
+                        }
                     } label: {
                         HStack(spacing: 10) {
                             Text(provider.title)
@@ -758,6 +778,44 @@ struct SettingsView: View {
                 status = error.localizedDescription
             }
         }
+        .task(id: usageRefreshID) { await refreshTranslationUsage() }
+    }
+
+    private var translationUsageRing: some View {
+        ZStack {
+            if case .loaded(let usage) = usageState {
+                Circle().strokeBorder(Color(nsColor: .darkGray), lineWidth: 3.5)
+                Circle()
+                    .inset(by: 1.75)
+                    .trim(from: 0, to: usage.fractionUsed)
+                    .stroke(.white, lineWidth: 2.5)
+                    .rotationEffect(.degrees(-90))
+            } else {
+                Circle().strokeBorder(.quaternary, lineWidth: 3.5)
+            }
+        }
+        .frame(width: 16, height: 16)
+        .contentShape(Rectangle())
+        .help(usageState.detail)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("机器翻译月用量")
+        .accessibilityValue(usageState.detail)
+    }
+
+    private func refreshTranslationUsage() async {
+        let refreshID = usageRefreshID
+        let result: UsageState
+        do {
+            if let credentials = try CloudCredentials.load() {
+                result = .loaded(try await Volcengine.translationUsage(credentials: credentials))
+            } else {
+                result = .missingCredentials
+            }
+        } catch {
+            result = .failed(error.localizedDescription)
+        }
+        guard !Task.isCancelled, refreshID == usageRefreshID else { return }
+        usageState = result
     }
 
     private func refreshPermissions() {
@@ -809,6 +867,8 @@ struct SettingsView: View {
             secretKey = secret
             hasCredentials = true
             status = "密钥已保存在本机。"
+            usageState = .loading
+            usageRefreshID += 1
         } catch {
             status = error.localizedDescription
         }
@@ -821,6 +881,8 @@ struct SettingsView: View {
             secretKey = ""
             hasCredentials = false
             status = "密钥已移除。"
+            usageState = .missingCredentials
+            usageRefreshID += 1
         } catch {
             status = error.localizedDescription
         }

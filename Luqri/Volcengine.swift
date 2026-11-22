@@ -42,6 +42,7 @@ enum VolcengineError: LocalizedError {
     case response(Int)
     case service(String, String)
     case emptyResult
+    case invalidBillingResult
 
     var errorDescription: String? {
         switch self {
@@ -49,6 +50,7 @@ enum VolcengineError: LocalizedError {
         case .response(let status): "火山引擎请求失败（HTTP \(status)）。"
         case .service(let code, let message): "火山引擎返回 \(code) · \(message)"
         case .emptyResult: "火山引擎未返回译文。"
+        case .invalidBillingResult: "火山引擎返回的账单明细无法计算用量。"
         }
     }
 }
@@ -62,6 +64,22 @@ struct VolcengineResponseMetadata: Decodable {
     let Error: APIError?
 }
 
+struct TranslationUsage: Sendable {
+    private static let monthlyFreeCharacters: Decimal = 2_000_000
+    let usedCharacters: Decimal
+
+    var fractionUsed: Double {
+        min(1, max(0, NSDecimalNumber(decimal: usedCharacters / Self.monthlyFreeCharacters).doubleValue))
+    }
+
+    var detail: String {
+        let format = Decimal.FormatStyle.number.precision(.fractionLength(2))
+        let used = (usedCharacters / 10_000).formatted(format)
+        let total = (Self.monthlyFreeCharacters / 10_000).formatted(format)
+        return "\(used) / \(total) 万字符"
+    }
+}
+
 enum Volcengine {
     struct Operation: Sendable {
         static let translation = Operation(
@@ -71,6 +89,10 @@ enum Volcengine {
         static let multilingualOCR = Operation(
             host: "visual.volcengineapi.com", query: "Action=MultiLanguageOCR&Version=2022-08-31",
             service: "cv", contentType: "application/x-www-form-urlencoded"
+        )
+        static let billingDetails = Operation(
+            host: "open.volcengineapi.com", query: "Action=ListBillDetail&Version=2022-01-01",
+            service: "billing", contentType: "application/json"
         )
 
         let host: String
@@ -225,5 +247,116 @@ enum Volcengine {
             utf8.append(hexDigits[Int(byte & 0x0f)])
         }
         return String(decoding: utf8, as: UTF8.self)
+    }
+}
+
+extension Volcengine {
+    private struct BillingRequest: Encodable {
+        let BillPeriod: String
+        let GroupTerm = 0
+        let GroupPeriod = 1
+        let IgnoreZero = 0
+        let Limit: Int
+        let Offset: Int
+    }
+
+    private struct BillingResponse: Decodable {
+        struct Page: Decodable {
+            let List: [BillingRow]?
+        }
+
+        let ResponseMetadata: VolcengineResponseMetadata?
+        let Result: Page?
+    }
+
+    private struct BillingRow: Decodable {
+        enum CodingKeys: String, CodingKey {
+            case ProductZh, Product, Element, ConfigName, Unit, Count
+        }
+
+        let characters: Decimal
+
+        init(from decoder: Decoder) throws {
+            characters = try Self.translationCharacters(in: decoder.container(keyedBy: CodingKeys.self))
+        }
+
+        private static func translationCharacters(in row: KeyedDecodingContainer<CodingKeys>) throws -> Decimal {
+            func label(_ field: CodingKeys) throws -> String {
+                try row.decodeIfPresent(String.self, forKey: field)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            }
+
+            let productName = try label(.ProductZh)
+            let product = try label(.Product)
+            let element = try label(.Element)
+            let configuration = try label(.ConfigName)
+            let unit = try label(.Unit)
+            let multiplier: Decimal? = switch unit {
+            case "字符", "字符数": 1
+            case "千字符", "千字符数": 1_000
+            case "万字符", "万字符数": 10_000
+            case "百万字符", "百万字符数": 1_000_000
+            case "" where element == "百万字符数": 1_000_000
+            default: nil
+            }
+
+            let products = [productName, product]
+            let labels = products + [element, configuration]
+            let textTranslation = /文本翻译|text[\s_-]*translation|TranslateText/.ignoresCase()
+            guard (products + [configuration]).contains("机器翻译接口服务")
+                    || labels.contains(where: { $0.contains(textTranslation) })
+                    || (products.contains("机器翻译") && (element == "百万字符数" || multiplier != nil)) else {
+                return 0
+            }
+
+            guard row.contains(.Count), try !row.decodeNil(forKey: .Count) else { return 0 }
+            let count: Decimal?
+            if let value = try? label(.Count) {
+                guard !value.isEmpty, value != "-" else { return 0 }
+                count = Decimal(string: value, locale: Locale(identifier: "en_US_POSIX"))
+            } else {
+                count = try? row.decode(Decimal.self, forKey: .Count)
+            }
+            guard let count, let multiplier else { throw VolcengineError.invalidBillingResult }
+            return count * multiplier
+        }
+    }
+
+    private static let billingMonth = Date.VerbatimFormatStyle(
+        format: "\(year: .padded(4))-\(month: .twoDigits)",
+        locale: Locale(identifier: "en_US_POSIX"),
+        timeZone: TimeZone(secondsFromGMT: 8 * 3600)!,
+        calendar: Calendar(identifier: .gregorian)
+    )
+
+    static func translationUsage(
+        credentials: CloudCredentials, now: Date = .now,
+        sendRequest: @Sendable (URLRequest) async throws -> (Data, Int) = send
+    ) async throws -> TranslationUsage {
+        let month = now.formatted(billingMonth)
+        let pageSize = 100
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        var offset = 0
+        var usedCharacters: Decimal = 0
+        while true {
+            try Task.checkCancellation()
+            let body = BillingRequest(BillPeriod: month, Limit: pageSize, Offset: offset)
+            let request = signedRequest(
+                payload: try encoder.encode(body), credentials: credentials, date: .now, operation: .billingDetails
+            )
+            let (data, status) = try await sendRequest(request)
+            let response = try? decoder.decode(BillingResponse.self, from: data)
+            if let error = response?.ResponseMetadata?.Error {
+                throw VolcengineError.service(error.Code, error.Message)
+            }
+            guard (200..<300).contains(status) else { throw VolcengineError.response(status) }
+            guard let result = response?.Result else {
+                throw VolcengineError.invalidBillingResult
+            }
+            let rows = result.List ?? []
+            for row in rows { usedCharacters += row.characters }
+            if rows.count < pageSize { return TranslationUsage(usedCharacters: max(0, usedCharacters)) }
+            offset += rows.count
+        }
     }
 }
