@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using Drawing = System.Drawing;
 using Forms = System.Windows.Forms;
 
@@ -97,8 +98,12 @@ internal static class Native
         SetWindowPos(hwnd, 0, bounds.X, bounds.Y, bounds.Width, bounds.Height, DontChangeZOrder | DontActivate);
     }
 
-    internal static void Position(Window window, Drawing.Point anchor, bool aboveCenter = false, bool byCursor = false)
+    internal static void ShowPositioned(Window window, Drawing.Point anchor, bool aboveCenter = false, bool byCursor = false)
     {
+        var opacity = window.Opacity;
+        // SizeToContent settles during the first layout, so keep layered windows transparent until they are positioned.
+        if (window.AllowsTransparency) window.SetCurrentValue(UIElement.OpacityProperty, 0.0);
+
         var hwnd = WindowHandle(window);
         var screen = Forms.Screen.FromPoint(anchor);
         var work = screen.WorkingArea;
@@ -108,18 +113,23 @@ internal static class Native
         window.MaxHeight = Math.Max(1, work.Height / scale - 16);
         window.Top = work.Top / scale;
         window.Left = work.Left / scale;
-        window.UpdateLayout();
-        window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        window.Show();
+        window.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
-            if (!window.IsVisible || !GetWindowRect(hwnd, out var rect)) return;
-            var width = rect.Right - rect.Left;
-            var height = rect.Bottom - rect.Top;
-            var x = byCursor ? anchor.X + 12 : work.Left + (work.Width - width) / 2;
-            var y = byCursor ? anchor.Y + 12 : work.Top + (work.Height - height) / 2;
-            if (aboveCenter) y -= (int)(screen.Bounds.Height * 0.12);
-            x = Math.Clamp(x, work.Left + 4, Math.Max(work.Left + 4, work.Right - width - 4));
-            y = Math.Clamp(y, work.Top + 4, Math.Max(work.Top + 4, work.Bottom - height - 4));
-            SetWindowPos(hwnd, 0, x, y, 0, 0, DontChangeZOrder | DontActivate | DontSize);
+            if (!window.IsVisible) return;
+            window.UpdateLayout();
+            if (GetWindowRect(hwnd, out var rect))
+            {
+                var width = rect.Right - rect.Left;
+                var height = rect.Bottom - rect.Top;
+                var x = byCursor ? anchor.X + 12 : work.Left + (work.Width - width) / 2;
+                var y = byCursor ? anchor.Y + 12 : work.Top + (work.Height - height) / 2;
+                if (aboveCenter) y -= (int)(screen.Bounds.Height * 0.12);
+                x = Math.Clamp(x, work.Left + 4, Math.Max(work.Left + 4, work.Right - width - 4));
+                y = Math.Clamp(y, work.Top + 4, Math.Max(work.Top + 4, work.Bottom - height - 4));
+                SetWindowPos(hwnd, 0, x, y, 0, 0, DontChangeZOrder | DontActivate | DontSize);
+            }
+            if (window.AllowsTransparency) window.SetCurrentValue(UIElement.OpacityProperty, opacity);
         });
     }
 }

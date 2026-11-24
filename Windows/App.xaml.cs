@@ -140,8 +140,7 @@ public partial class App : Application
                 () => translation?.PreferencesChanged(), RefreshTray);
             settings = window;
             window.Closed += (_, _) => settings = null;
-            Native.Position(window, Forms.Cursor.Position);
-            window.Show();
+            Native.ShowPositioned(window, Forms.Cursor.Position);
         }
         else
         {
@@ -226,8 +225,7 @@ public partial class App : Application
         {
             if (window.IsVisible) Native.KeepOnScreen(window);
         });
-        Native.Position(window, anchor, aboveCenter: true);
-        window.Show();
+        Native.ShowPositioned(window, anchor, aboveCenter: true);
         window.Activate();
         return window.LoadAsync(text, image);
     }
@@ -255,8 +253,7 @@ public partial class App : Application
         window.MouseLeftButtonDown += (_, _) => window.Close();
         window.Closed += (_, _) => { timer.Stop(); feedback = null; };
         feedback = window;
-        Native.Position(window, anchor, byCursor: true);
-        window.Show();
+        Native.ShowPositioned(window, anchor, byCursor: true);
         timer.Start();
     }
 

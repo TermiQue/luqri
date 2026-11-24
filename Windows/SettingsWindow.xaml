@@ -7,88 +7,86 @@
         Background="{DynamicResource Surface}" Foreground="{DynamicResource Ink}"
         FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" UseLayoutRounding="True">
     <Window.Resources>
-        <Style x:Key="Section" TargetType="TextBlock">
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Margin" Value="10,0,0,8"/>
-        </Style>
-        <Style x:Key="Group" TargetType="Border">
-            <Setter Property="Background" Value="{DynamicResource SettingsCard}"/>
-            <Setter Property="CornerRadius" Value="12"/>
-            <Setter Property="Padding" Value="10,0"/>
-            <Setter Property="Margin" Value="0,0,0,28"/>
-        </Style>
-        <Style x:Key="Row" TargetType="DockPanel">
-            <Setter Property="MinHeight" Value="37"/>
-        </Style>
-        <Style x:Key="Divider" TargetType="Border">
-            <Setter Property="Background" Value="{DynamicResource Line}"/>
-            <Setter Property="Height" Value="1"/>
-            <Setter Property="Opacity" Value="0.55"/>
-        </Style>
-        <Style TargetType="Label">
-            <Setter Property="Padding" Value="0"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
-        </Style>
-        <Style TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center"/>
-        </Style>
-        <Style TargetType="PasswordBox">
-            <Setter Property="Height" Value="25"/>
-            <Setter Property="Padding" Value="5,2"/>
-            <Setter Property="Background" Value="{DynamicResource Surface}"/>
-            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
-        </Style>
-        <Style TargetType="ComboBox">
-            <Setter Property="MinWidth" Value="100"/>
-            <Setter Property="MinHeight" Value="24"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="HorizontalContentAlignment" Value="Right"/>
-            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ComboBox">
-                        <Grid>
-                            <ToggleButton Focusable="False" ClickMode="Press"
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="SettingsControls.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <Style x:Key="Section" TargetType="TextBlock">
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Margin" Value="10,0,0,8"/>
+            </Style>
+            <Style x:Key="Group" TargetType="Border">
+                <Setter Property="Background" Value="{DynamicResource SettingsCard}"/>
+                <Setter Property="CornerRadius" Value="12"/>
+                <Setter Property="Padding" Value="10,0"/>
+                <Setter Property="Margin" Value="0,0,0,28"/>
+            </Style>
+            <Style x:Key="Row" TargetType="DockPanel">
+                <Setter Property="MinHeight" Value="37"/>
+            </Style>
+            <Style x:Key="Divider" TargetType="Border">
+                <Setter Property="Background" Value="{DynamicResource Line}"/>
+                <Setter Property="Height" Value="1"/>
+                <Setter Property="Opacity" Value="0.55"/>
+            </Style>
+            <Style TargetType="Label">
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+            </Style>
+            <Style TargetType="TextBlock">
+                <Setter Property="VerticalAlignment" Value="Center"/>
+            </Style>
+            <Style TargetType="ComboBox">
+                <Setter Property="MinWidth" Value="100"/>
+                <Setter Property="MinHeight" Value="24"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="HorizontalContentAlignment" Value="Right"/>
+                <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+                <Setter Property="ItemContainerStyle" Value="{StaticResource LanguageMenuItem}"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBox">
+                            <Grid>
+                                <ToggleButton Focusable="False" ClickMode="Press"
                                           IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
-                                <ToggleButton.Template>
-                                    <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="ButtonPlate" Background="Transparent" CornerRadius="6">
-                                            <Border Width="19" Height="19" CornerRadius="9.5" HorizontalAlignment="Right"
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border x:Name="ButtonPlate" Background="Transparent" CornerRadius="6">
+                                                <Border Width="19" Height="19" CornerRadius="9.5" HorizontalAlignment="Right"
                                                     Margin="0,0,2,0" Background="{DynamicResource ButtonFill}">
-                                                <local:Icon Glyph="chevron-down" Width="10" Height="10"/>
+                                                    <local:Icon Glyph="chevron-down" Width="10" Height="10"/>
+                                                </Border>
                                             </Border>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="ButtonPlate" Property="Background" Value="{DynamicResource Hover}"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </ToggleButton.Template>
-                            </ToggleButton>
-                            <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" Margin="4,0,28,0"
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="ButtonPlate" Property="Background" Value="{DynamicResource Hover}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+                                <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" Margin="4,0,28,0"
                                               ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                               VerticalAlignment="Center" HorizontalAlignment="Right" IsHitTestVisible="False"/>
-                            <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
+                                <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
                                    IsOpen="{TemplateBinding IsDropDownOpen}" Focusable="False">
-                                <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Line}"
-                                        BorderThickness="1" CornerRadius="6" Padding="3" MinWidth="{TemplateBinding ActualWidth}"
+                                    <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Line}"
+                                        BorderThickness="1" CornerRadius="10" Padding="4" Margin="0,3,0,0" MinWidth="148"
                                         MaxHeight="{TemplateBinding MaxDropDownHeight}">
-                                    <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto">
-                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
-                                    </ScrollViewer>
-                                </Border>
-                            </Popup>
-                        </Grid>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
+                                        <local:OverlayScrollViewer Style="{StaticResource OverlayScroll}" CanContentScroll="True">
+                                            <ItemsPresenter x:Name="ItemsPresenter" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                        </local:OverlayScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
     </Window.Resources>
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                  Background="{DynamicResource Surface}" Focusable="False">
+    <local:OverlayScrollViewer Style="{StaticResource OverlayScroll}" Background="{DynamicResource Surface}">
         <StackPanel Margin="19,18,19,0">
             <TextBlock Text="翻译服务" Style="{StaticResource Section}"/>
             <Border Style="{StaticResource Group}">
@@ -106,7 +104,7 @@
                     </DockPanel>
                     <Border Style="{StaticResource Divider}"/>
                     <DockPanel Style="{StaticResource Row}">
-                        <CheckBox x:Name="EnableCloud" DockPanel.Dock="Right" VerticalAlignment="Center"
+                        <CheckBox x:Name="EnableCloud" DockPanel.Dock="Right" Style="{StaticResource RoundedCheckBox}"
                                   AutomationProperties.Name="启用火山引擎翻译" Checked="CloudChanged" Unchecked="CloudChanged"/>
                         <Grid x:Name="UsageRing" DockPanel.Dock="Right" Width="21" Height="22" Margin="0,0,8,0"
                               VerticalAlignment="Center" Background="Transparent" Focusable="True"
@@ -145,14 +143,16 @@
                     <DockPanel Margin="0,0,0,10">
                         <Button Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="PasteAccess"
                                 ToolTip="粘贴 Access Key ID" AutomationProperties.Name="粘贴 Access Key ID"><local:Icon Glyph="clipboard-paste"/></Button>
-                        <PasswordBox x:Name="AccessKey" PasswordChanged="CredentialChanged" AutomationProperties.Name="Access Key ID"/>
+                        <PasswordBox x:Name="AccessKey" Style="{StaticResource RoundedPasswordBox}"
+                                     PasswordChanged="CredentialChanged" AutomationProperties.Name="Access Key ID"/>
                     </DockPanel>
                     <Border Style="{StaticResource Divider}"/>
                     <Label Content="Secret Access Key" Target="{Binding ElementName=SecretKey}" Margin="0,9,0,6"/>
                     <DockPanel Margin="0,0,0,10">
                         <Button Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="PasteSecret"
                                 ToolTip="粘贴 Secret Access Key" AutomationProperties.Name="粘贴 Secret Access Key"><local:Icon Glyph="clipboard-paste"/></Button>
-                        <PasswordBox x:Name="SecretKey" PasswordChanged="CredentialChanged" AutomationProperties.Name="Secret Access Key"/>
+                        <PasswordBox x:Name="SecretKey" Style="{StaticResource RoundedPasswordBox}"
+                                     PasswordChanged="CredentialChanged" AutomationProperties.Name="Secret Access Key"/>
                     </DockPanel>
                     <Border Style="{StaticResource Divider}"/>
                     <DockPanel Margin="0,10">
@@ -177,5 +177,5 @@
             </Border>
 
         </StackPanel>
-    </ScrollViewer>
+    </local:OverlayScrollViewer>
 </Window>
