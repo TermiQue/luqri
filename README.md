@@ -29,6 +29,18 @@ Luqri 是 macOS 原生的菜单栏翻译与文字识别工具，支持划词翻�
 
 单独构建某个架构时传入 `-Runtime win-x64` 或 `-Runtime win-arm64`。
 
+### 打包 Windows 安装程序
+
+安装 Inno Setup 7.1 或更新版本后，在仓库根目录运行以下命令。 [Inno Setup 下载](https://jrsoftware.org/inno-setup/downloads)
+
+```powershell
+.\scripts\package-windows.ps1
+```
+
+如果 `ISCC.exe` 不在 PATH 中，用 `-Compiler` 指定它的完整路径。脚本在两个架构目录内分别生成 `Luqri-Setup-x64.exe` 和 `Luqri-Setup-arm64.exe`，安装包包含 .NET 桌面运行时。
+
+安装程序默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Luqri`，并创建开始菜单快捷方式。升级或卸载前先从托盘退出 Luqri。可在 Windows「已安装的应用」中卸载，卸载保留 `%LOCALAPPDATA%\Luqri` 下的设置和密钥。
+
 以下安装和构建说明适用于 macOS 版。
 
 ## 界面截图
