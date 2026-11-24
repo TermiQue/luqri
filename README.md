@@ -20,14 +20,14 @@ Luqri 是 macOS 原生的菜单栏翻译与文字识别工具，支持划词翻�
 
 ### 构建 Windows 版
 
-在 Windows 上安装 .NET 10 SDK，在仓库根目录运行以下命令。脚本默认生成 x64 自包含目录，目标电脑可直接运行目录中的 `Luqri.exe`。
+在 Windows 上安装 .NET 10 SDK，在仓库根目录运行以下命令。脚本默认直接在 `.build` 下生成 `Luqri-win-x64` 和 `Luqri-win-arm64` 两个自包含目录。目标电脑可直接运行对应目录中的 `Luqri.exe`。
 
 ```powershell
-.\scripts\build-windows.ps1 -Package
+.\scripts\build-windows.ps1
 .\.build\Luqri-win-x64\Luqri.exe --settings
 ```
 
-`-Runtime win-arm64` 可构建 ARM64 版。`-Package` 额外生成 ZIP 和 SHA-256 校验文件。
+单独构建某个架构时传入 `-Runtime win-x64` 或 `-Runtime win-arm64`。
 
 以下安装和构建说明适用于 macOS 版。
 
