@@ -2,6 +2,20 @@
 
 Luqri 是基于 WPF 和 Win32 的 Windows 托盘工具，支持划词翻译、截图文字识别和截图翻译。
 
+## 界面截图
+
+### 翻译浮窗
+
+![Luqri 翻译浮窗](README.assets/translate.png)
+
+### 截图 OCR
+
+![Luqri 截图 OCR](README.assets/ocr.png)
+
+### 设置
+
+![Luqri 设置窗口](README.assets/setting.png)
+
 ## 安装
 
 根据电脑的处理器架构运行 `Luqri-Setup-x64.exe` 或 `Luqri-Setup-arm64.exe`。安装包包含 .NET 桌面运行时，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Luqri`，并在开始菜单中创建 Luqri 快捷方式。也可以直接运行自包含目录中的 `Luqri.exe`。
