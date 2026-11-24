@@ -321,7 +321,7 @@ public partial class SettingsWindow : Window
         catch (Exception error)
         {
             if (!current.IsCancellationRequested)
-                DisplayUsage(cached, $"无法查询本月用量。\n{TranslationWindow.FriendlyError(error)}");
+                DisplayUsage(cached, $"无法查询本月用量。\n{Volcengine.DescribeError(error)}");
         }
         finally
         {

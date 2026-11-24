@@ -1,7 +1,4 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Interop;
+using System.Runtime.InteropServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Drawing = System.Drawing;
@@ -45,38 +42,65 @@ internal sealed class ScreenCapture
         }
     }
 
-    public static BitmapSource Capture(Region region)
+    public static BitmapSource Capture(Region region, int maximumDimension = OcrImage.MaximumDimension)
     {
         Native.DwmFlush();
-        using var bitmap = new Drawing.Bitmap(region.Bounds.Width, region.Bounds.Height, Drawing.Imaging.PixelFormat.Format32bppRgb);
-        using (var graphics = Drawing.Graphics.FromImage(bitmap))
-        {
-            var screen = Native.GetDC(0);
-            if (screen == 0) throw new InvalidOperationException("无法读取屏幕，请重新框选。");
-            try
-            {
-                var target = graphics.GetHdc();
-                try
-                {
-                    const uint copyLayeredWindows = 0x40CC0020; // SRCCOPY | CAPTUREBLT
-                    if (!Native.BitBlt(target, 0, 0, region.Bounds.Width, region.Bounds.Height,
-                        screen, region.Bounds.X, region.Bounds.Y, copyLayeredWindows))
-                        throw new InvalidOperationException("无法截取选区，请重新框选。");
-                }
-                finally { graphics.ReleaseHdc(target); }
-            }
-            finally { Native.ReleaseDC(0, screen); }
-        }
-
-        var handle = bitmap.GetHbitmap();
+        var bounds = region.Bounds;
+        var (width, height) = OcrImage.Fit(bounds.Width, bounds.Height, maximumDimension);
+        var screen = GetDC(0);
+        if (screen == 0) throw new InvalidOperationException("无法读取屏幕，请重新框选。");
         try
         {
-            var source = Imaging.CreateBitmapSourceFromHBitmap(handle, 0, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
-            var pixels = new FormatConvertedBitmap(source, PixelFormats.Bgr32, null, 0);
+            var capture = CopyRegion(screen, bounds, width, height);
+            if (capture is not null) return capture;
+            // Fall back to an unscaled read on display drivers that cannot stretch a screen region.
+            if ((width, height) != (bounds.Width, bounds.Height) &&
+                CopyRegion(screen, bounds, bounds.Width, bounds.Height) is { } fullSize) return fullSize;
+            throw new InvalidOperationException("无法截取选区，请重新框选。");
+        }
+        finally { ReleaseDC(0, screen); }
+    }
+
+    private static BitmapSource? CopyRegion(nint screen, Drawing.Rectangle bounds, int width, int height)
+    {
+        var target = CreateCompatibleDC(screen);
+        if (target == 0) return null;
+        nint bitmap = 0;
+        nint previous = 0;
+        try
+        {
+            var info = new BitmapInfoHeader
+            {
+                Size = (uint)Marshal.SizeOf<BitmapInfoHeader>(), Width = width, Height = -height, Planes = 1, BitsPerPixel = 32
+            };
+            bitmap = CreateDIBSection(target, ref info, 0, out var buffer, 0, 0);
+            if (bitmap == 0 || buffer == 0) return null;
+            previous = SelectObject(target, bitmap);
+            if (previous == 0 || previous == -1 || !CopyPixels(target, screen, bounds, width, height) || !GdiFlush())
+                return null;
+
+            var stride = checked(width * 4);
+            var pixels = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgr32, null, buffer, checked(stride * height), stride);
             pixels.Freeze();
             return pixels;
         }
-        finally { Native.DeleteObject(handle); }
+        finally
+        {
+            if (previous != 0 && previous != -1) SelectObject(target, previous);
+            DeleteDC(target);
+            if (bitmap != 0) DeleteObject(bitmap);
+        }
+    }
+
+    private static bool CopyPixels(nint target, nint screen, Drawing.Rectangle bounds, int width, int height)
+    {
+        const uint copyLayeredWindows = 0x40CC0020; // SRCCOPY | CAPTUREBLT
+        if (width == bounds.Width && height == bounds.Height)
+            return BitBlt(target, 0, 0, width, height, screen, bounds.X, bounds.Y, copyLayeredWindows);
+
+        const int halftone = 4;
+        return SetStretchBltMode(target, halftone) != 0 && SetBrushOrgEx(target, 0, 0, 0) &&
+            StretchBlt(target, 0, 0, width, height, screen, bounds.X, bounds.Y, bounds.Width, bounds.Height, copyLayeredWindows);
     }
 
     public void Cancel() => Finish(null);
@@ -92,113 +116,31 @@ internal sealed class ScreenCapture
         if (hadFocus && previousWindow != 0) Native.SetForegroundWindow(previousWindow);
         completion.TrySetResult(region);
     }
-}
 
-internal sealed class SelectionOverlay : Window
-{
-    private readonly Canvas canvas = new() { Background = Brushes.Transparent, ClipToBounds = true };
-    private readonly System.Windows.Shapes.Path shade = new()
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfoHeader
     {
-        Fill = new SolidColorBrush(Color.FromArgb(74, 0, 0, 0)), IsHitTestVisible = false
-    };
-    private readonly Border outline = new() { BorderBrush = Brushes.White, BorderThickness = new(1), IsHitTestVisible = false };
-    private readonly Border hint = new()
-    {
-        Background = Brushes.White, CornerRadius = new(7), Padding = new(14, 8, 14, 8), IsHitTestVisible = false,
-        Child = new TextBlock { Text = "拖动框选文字   ·   Esc 取消", Foreground = Brushes.Black, FontSize = 13 }
-    };
-    private readonly bool hasHint;
-    private readonly Action<ScreenCapture.Region?> finish;
-    private Point? start;
-
-    public Drawing.Rectangle Bounds { get; }
-
-    public SelectionOverlay(Drawing.Rectangle bounds, bool hasHint, Action<ScreenCapture.Region?> finish)
-    {
-        Bounds = bounds;
-        this.hasHint = hasHint;
-        this.finish = finish;
-        WindowStyle = WindowStyle.None;
-        ResizeMode = ResizeMode.NoResize;
-        AllowsTransparency = true;
-        Background = Brushes.Transparent;
-        ShowInTaskbar = false;
-        ShowActivated = false;
-        Topmost = true;
-        Cursor = Cursors.Cross;
-        Content = canvas;
-        canvas.Children.Add(shade);
-        canvas.Children.Add(outline);
-        if (hasHint) canvas.Children.Add(hint);
-        canvas.SizeChanged += (_, _) => Draw(null, Mouse.GetPosition(canvas));
-        canvas.MouseLeftButtonDown += (_, e) =>
-        {
-            Activate();
-            start = Clamp(e.GetPosition(canvas));
-            canvas.CaptureMouse();
-            Draw(null, start.Value);
-        };
-        canvas.MouseMove += (_, e) =>
-        {
-            var point = Clamp(e.GetPosition(canvas));
-            Draw(start is { } origin ? new Rect(origin, point) : null, point);
-        };
-        canvas.MouseLeftButtonUp += (_, e) => Complete(Clamp(e.GetPosition(canvas)));
-        canvas.LostMouseCapture += (_, _) =>
-        {
-            if (start is null) return;
-            start = null;
-            Draw(null, Mouse.GetPosition(canvas));
-        };
-        PreviewKeyDown += (_, e) =>
-        {
-            if (e.Key == Key.Escape) { e.Handled = true; finish(null); }
-        };
-        MouseRightButtonDown += (_, _) => finish(null);
+        public uint Size;
+        public int Width, Height;
+        public ushort Planes, BitsPerPixel;
+        public uint Compression, SizeImage;
+        public int XPixelsPerMeter, YPixelsPerMeter;
+        public uint ColorsUsed, ColorsImportant;
     }
 
-    private Point Clamp(Point point) => new(Math.Clamp(point.X, 0, canvas.ActualWidth), Math.Clamp(point.Y, 0, canvas.ActualHeight));
-
-    private void Complete(Point end)
-    {
-        if (start is not { } origin) return;
-        var selection = new Rect(origin, end);
-        start = null;
-        canvas.ReleaseMouseCapture();
-        if (selection.Width < 4 || selection.Height < 4)
-        {
-            Draw(null, end);
-            return;
-        }
-
-        var first = canvas.PointToScreen(selection.TopLeft);
-        var last = canvas.PointToScreen(selection.BottomRight);
-        var cursor = canvas.PointToScreen(end);
-        var bounds = Drawing.Rectangle.FromLTRB((int)Math.Floor(first.X), (int)Math.Floor(first.Y),
-            (int)Math.Ceiling(last.X), (int)Math.Ceiling(last.Y));
-        finish(new(Drawing.Rectangle.Intersect(Bounds, bounds), new((int)cursor.X, (int)cursor.Y)));
-    }
-
-    private void Draw(Rect? selection, Point pointer)
-    {
-        var full = new RectangleGeometry(new Rect(0, 0, canvas.ActualWidth, canvas.ActualHeight));
-        outline.Visibility = selection.HasValue ? Visibility.Visible : Visibility.Collapsed;
-        shade.Data = full;
-        if (selection is { } box)
-        {
-            shade.Data = new CombinedGeometry(GeometryCombineMode.Exclude, full, new RectangleGeometry(box));
-            Canvas.SetLeft(outline, box.Left);
-            Canvas.SetTop(outline, box.Top);
-            outline.Width = box.Width;
-            outline.Height = box.Height;
-        }
-        if (!hasHint) return;
-        hint.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var hintPosition = new Rect((canvas.ActualWidth - hint.DesiredSize.Width) / 2, 54,
-            hint.DesiredSize.Width, hint.DesiredSize.Height);
-        Canvas.SetLeft(hint, hintPosition.Left);
-        Canvas.SetTop(hint, hintPosition.Top);
-        hintPosition.Inflate(10, 10);
-        hint.Visibility = start is null && !hintPosition.Contains(pointer) ? Visibility.Visible : Visibility.Hidden;
-    }
+    [DllImport("user32")] private static extern nint GetDC(nint window);
+    [DllImport("user32")] private static extern int ReleaseDC(nint window, nint dc);
+    [DllImport("gdi32")] private static extern nint CreateCompatibleDC(nint dc);
+    [DllImport("gdi32")] private static extern bool DeleteDC(nint dc);
+    [DllImport("gdi32")] private static extern bool DeleteObject(nint handle);
+    [DllImport("gdi32")] private static extern nint SelectObject(nint dc, nint handle);
+    [DllImport("gdi32")] private static extern nint CreateDIBSection(nint dc, ref BitmapInfoHeader info, uint usage,
+        out nint buffer, nint section, uint offset);
+    [DllImport("gdi32")] private static extern bool GdiFlush();
+    [DllImport("gdi32")] private static extern int SetStretchBltMode(nint dc, int mode);
+    [DllImport("gdi32")] private static extern bool SetBrushOrgEx(nint dc, int x, int y, nint previous);
+    [DllImport("gdi32")] private static extern bool BitBlt(nint target, int x, int y, int width, int height,
+        nint source, int sourceX, int sourceY, uint operation);
+    [DllImport("gdi32")] private static extern bool StretchBlt(nint target, int x, int y, int width, int height,
+        nint source, int sourceX, int sourceY, int sourceWidth, int sourceHeight, uint operation);
 }

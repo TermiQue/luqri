@@ -50,12 +50,12 @@ public partial class TranslationWindow : Window
             loadingInput = true;
             inputError = null;
             UpdateControls();
-            try { text = await cloud.RecognizeAsync(image, RequireCredentials(), current.Token); }
+            try { text = await cloud.RecognizeAsync(image, Preferences.RequireCredentials(), current.Token); }
             catch (OperationCanceledException) when (current.IsCancellationRequested) { return; }
             catch (Exception error)
             {
                 if (current.IsCancellationRequested) return;
-                inputError = FriendlyError(error);
+                inputError = Volcengine.DescribeError(error);
             }
             finally
             {
@@ -91,7 +91,7 @@ public partial class TranslationWindow : Window
         UpdateControls();
         try
         {
-            var translated = await cloud.TranslateAsync(input, source, target, RequireCredentials(), current.Token);
+            var translated = await cloud.TranslateAsync(input, source, target, Preferences.RequireCredentials(), current.Token);
             if (current.IsCancellationRequested) return;
             Result.Text = translated;
             resultLanguage = target;
@@ -99,7 +99,7 @@ public partial class TranslationWindow : Window
         catch (OperationCanceledException) when (current.IsCancellationRequested) { }
         catch (Exception error)
         {
-            if (!current.IsCancellationRequested) ResultStatus.Text = FriendlyError(error);
+            if (!current.IsCancellationRequested) ResultStatus.Text = Volcengine.DescribeError(error);
         }
         finally
         {
@@ -111,17 +111,6 @@ public partial class TranslationWindow : Window
             current.Dispose();
         }
     }
-
-    internal static Credentials RequireCredentials() => Preferences.ReadCredentials() ??
-        throw new InvalidOperationException("请在设置中填写火山引擎访问密钥。");
-
-    internal static string FriendlyError(Exception error) => error switch
-    {
-        OperationCanceledException => "请求超时，请重试。",
-        System.Net.Http.HttpRequestException => "无法连接火山引擎，请检查网络后重试。",
-        System.Text.Json.JsonException => "火山引擎返回格式异常，请重试。",
-        _ => error.Message
-    };
 
     private void CancelWork()
     {

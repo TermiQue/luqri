@@ -103,6 +103,9 @@ internal sealed class Preferences
 
     public void Save() => WriteAtomically(SettingsPath, JsonSerializer.SerializeToUtf8Bytes(this));
 
+    public static Credentials RequireCredentials() => ReadCredentials() ??
+        throw new InvalidOperationException("请在设置中填写火山引擎访问密钥。");
+
     public static Credentials? ReadCredentials()
     {
         try

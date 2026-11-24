@@ -192,7 +192,7 @@ public partial class App : Application
             if (command == Command.ScreenshotTranslate) await ShowTranslationAsync(anchor, image: pixels);
             else
             {
-                var credentials = TranslationWindow.RequireCredentials();
+                var credentials = Preferences.RequireCredentials();
                 var text = await cloud.RecognizeAsync(pixels, credentials, current.Token);
                 current.Token.ThrowIfCancellationRequested();
                 Clipboard.SetText(text);
@@ -204,7 +204,7 @@ public partial class App : Application
             if (!current.IsCancellationRequested)
             {
                 if (command == Command.Translate) await ShowTranslationAsync(anchor);
-                else ShowOcrError(TranslationWindow.FriendlyError(error), anchor);
+                else ShowOcrError(Volcengine.DescribeError(error), anchor);
             }
         }
         finally

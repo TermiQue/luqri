@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Windows;
-using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace Luqri;
@@ -38,7 +37,7 @@ internal sealed class Volcengine(HttpClient client)
             {
                 SourceLanguage = sourceCode, TargetLanguage = target.CloudCode, TextList = new[] { content }
             }, Json);
-            using var response = await SendAsync(Translation, payload, credentials, token);
+            using var response = await SendAsync(Translation, payload, credentials, token).ConfigureAwait(false);
             var list = Field(response.RootElement, "TranslationList");
             if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() == 0 ||
                 String(list[0], "Translation") is not { Length: > 0 } translated)
@@ -75,8 +74,8 @@ internal sealed class Volcengine(HttpClient client)
 
     public async Task<string> RecognizeAsync(BitmapSource image, Credentials credentials, CancellationToken token)
     {
-        var payload = await Task.Run(() => EncodeScreenshot(image, token), token);
-        using var response = await SendAsync(Ocr, payload, credentials, token);
+        var payload = await Task.Run(() => OcrImage.Encode(image, token), token).ConfigureAwait(false);
+        using var response = await SendAsync(Ocr, payload, credentials, token).ConfigureAwait(false);
         var root = response.RootElement;
         var codes = new[] { Field(root, "code"), Field(root, "status") }
             .Where(value => value.ValueKind == JsonValueKind.Number).Select(value => value.GetInt32()).ToArray();
@@ -96,46 +95,22 @@ internal sealed class Volcengine(HttpClient client)
     private static Rect Bounds(JsonElement value)
     {
         if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != 4) return Rect.Empty;
-        var points = new List<Point>();
+        var left = double.PositiveInfinity;
+        var top = double.PositiveInfinity;
+        var right = double.NegativeInfinity;
+        var bottom = double.NegativeInfinity;
         foreach (var pair in value.EnumerateArray())
         {
             if (pair.ValueKind != JsonValueKind.Array || pair.GetArrayLength() != 2 ||
                 pair[0].ValueKind != JsonValueKind.Number || pair[1].ValueKind != JsonValueKind.Number ||
-                !pair[0].TryGetDouble(out var x) || !pair[1].TryGetDouble(out var y)) return Rect.Empty;
-            points.Add(new Point(x, y));
+                !pair[0].TryGetDouble(out var x) || !pair[1].TryGetDouble(out var y) ||
+                !double.IsFinite(x) || !double.IsFinite(y)) return Rect.Empty;
+            left = Math.Min(left, x);
+            top = Math.Min(top, y);
+            right = Math.Max(right, x);
+            bottom = Math.Max(bottom, y);
         }
-        return new Rect(new Point(points.Min(p => p.X), points.Min(p => p.Y)),
-            new Point(points.Max(p => p.X), points.Max(p => p.Y)));
-    }
-
-    private static byte[] EncodeScreenshot(BitmapSource image, CancellationToken token)
-    {
-        const int maximumDimension = 2048;
-        var scale = Math.Min(1.0, (double)maximumDimension / Math.Max(image.PixelWidth, image.PixelHeight));
-        var scaledWidth = Math.Max(1, (int)Math.Round(image.PixelWidth * scale));
-        var scaledHeight = Math.Max(1, (int)Math.Round(image.PixelHeight * scale));
-        var width = Math.Max(256, scaledWidth);
-        var height = Math.Max(256, scaledHeight);
-        var visual = new DrawingVisual();
-        RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.HighQuality);
-        using (var drawing = visual.RenderOpen())
-        {
-            drawing.DrawRectangle(Brushes.White, null, new Rect(0, 0, width, height));
-            drawing.DrawImage(image, new Rect((width - scaledWidth) / 2, (height - scaledHeight) / 2, scaledWidth, scaledHeight));
-        }
-        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(visual);
-        foreach (var quality in new[] { 90, 72, 55 })
-        {
-            token.ThrowIfCancellationRequested();
-            var encoder = new JpegBitmapEncoder { QualityLevel = quality };
-            encoder.Frames.Add(BitmapFrame.Create(bitmap));
-            using var buffer = new MemoryStream();
-            encoder.Save(buffer);
-            var payload = "image_base64=" + Uri.EscapeDataString(Convert.ToBase64String(buffer.GetBuffer(), 0, (int)buffer.Length));
-            if (payload.Length <= 8_000_000) return Encoding.ASCII.GetBytes(payload);
-        }
-        throw new InvalidOperationException("截图超过火山引擎 OCR 的大小限制，请缩小选区。");
+        return new Rect(new Point(left, top), new Point(right, bottom));
     }
 
     public static string BillingPeriod(DateTimeOffset date) =>
@@ -151,7 +126,7 @@ internal sealed class Volcengine(HttpClient client)
             {
                 BillPeriod = month, GroupTerm = 0, GroupPeriod = 1, IgnoreZero = 0, Limit = pageSize, Offset = offset
             });
-            using var response = await SendAsync(Billing, body, credentials, token);
+            using var response = await SendAsync(Billing, body, credentials, token).ConfigureAwait(false);
             var result = Field(response.RootElement, "Result");
             var entries = Field(result, "List");
             if (result.ValueKind != JsonValueKind.Object) throw InvalidBillingResult();
@@ -189,6 +164,14 @@ internal sealed class Volcengine(HttpClient client)
     }
 
     private static InvalidOperationException InvalidBillingResult() => new("火山引擎返回的账单明细无法计算用量。");
+
+    internal static string DescribeError(Exception error) => error switch
+    {
+        OperationCanceledException => "请求超时，请重试。",
+        HttpRequestException => "无法连接火山引擎，请检查网络后重试。",
+        JsonException => "火山引擎返回格式异常，请重试。",
+        _ => error.Message
+    };
 
     private async Task<JsonDocument> SendAsync(Operation operation, byte[] payload, Credentials credentials, CancellationToken token)
     {
@@ -282,9 +265,10 @@ internal sealed record OcrLine(string Text, Rect Bounds)
         if (!continuesLine || Math.Abs(second.Left - first.Left) >= height * 0.45 ||
             IsListItem(previous.Text) || IsListItem(next.Text) || ":：".Contains(previous.Text[^1])) return "\n";
 
-        var lastText = previous.Text.EnumerateRunes().Last().Value;
-        var firstText = next.Text.EnumerateRunes().First().Value;
-        return (IsEastAsian(lastText) && IsEastAsian(firstText)) || "，。！？、；：）】》」』".Contains(next.Text[0]) ? "" : " ";
+        Rune.DecodeLastFromUtf16(previous.Text, out var lastText, out _);
+        Rune.DecodeFromUtf16(next.Text, out var firstText, out _);
+        return (IsEastAsian(lastText.Value) && IsEastAsian(firstText.Value)) ||
+            "，。！？、；：）】》」』".Contains(next.Text[0]) ? "" : " ";
     }
 
     private static bool IsListItem(string text) => text.StartsWith('•') || text.StartsWith('・') ||

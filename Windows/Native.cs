@@ -17,8 +17,6 @@ internal static class Native
     [DllImport("user32")] internal static extern uint GetWindowThreadProcessId(nint window, out uint processId);
     [DllImport("user32")] internal static extern uint GetClipboardSequenceNumber();
     [DllImport("user32")] internal static extern nint GetClipboardOwner();
-    [DllImport("user32")] internal static extern nint GetDC(nint window);
-    [DllImport("user32")] internal static extern int ReleaseDC(nint window, nint dc);
     [DllImport("user32")] internal static extern short GetAsyncKeyState(int key);
     [DllImport("user32")] private static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32")] private static extern uint GetDpiForWindow(nint window);
@@ -26,9 +24,6 @@ internal static class Native
     [DllImport("user32")] private static extern bool GetWindowRect(nint window, out WindowRect rect);
     [DllImport("user32")] internal static extern bool SetWindowDisplayAffinity(nint window, uint affinity);
     [DllImport("dwmapi")] internal static extern int DwmFlush();
-    [DllImport("gdi32")] internal static extern bool DeleteObject(nint objectHandle);
-    [DllImport("gdi32", SetLastError = true)]
-    internal static extern bool BitBlt(nint target, int x, int y, int width, int height, nint source, int sourceX, int sourceY, uint operation);
 
     private const uint DontSize = 0x0001;
     private const uint DontChangeZOrder = 0x0004;
