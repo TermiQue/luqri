@@ -43,7 +43,8 @@
                                      MinHeight="72" MaxHeight="176" AcceptsReturn="True"
                                      AutomationProperties.Name="原文" TextChanged="OnEdited"/>
                             <TextBlock x:Name="Placeholder" Text="输入或粘贴文字…" Foreground="{DynamicResource Muted}"
-                                       FontSize="15" Margin="3,0" IsHitTestVisible="False" TextWrapping="Wrap"/>
+                                       FontSize="15" Margin="10,0,3,0" VerticalAlignment="Top"
+                                       IsHitTestVisible="False" TextWrapping="Wrap"/>
                         </Grid>
                         <DockPanel Margin="0,6,0,0" LastChildFill="False">
                             <Button x:Name="TranslateButton" Style="{StaticResource AccentButton}" DockPanel.Dock="Right"

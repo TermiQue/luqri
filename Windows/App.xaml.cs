@@ -20,6 +20,7 @@ public partial class App : Application
     private Forms.NotifyIcon? tray;
     private Forms.ContextMenuStrip? menu;
     private Drawing.Icon? trayIcon;
+    private readonly Dictionary<string, Drawing.Bitmap> menuIcons = new();
     private Mutex? instance;
     private EventWaitHandle? requestSettings;
     private RegisteredWaitHandle? settingsListener;
@@ -80,11 +81,17 @@ public partial class App : Application
         using var stream = typeof(App).Assembly.GetManifestResourceStream("Luqri.Luqri.ico")!;
         using var icon = new Drawing.Icon(stream);
         trayIcon = (Drawing.Icon)icon.Clone();
+        using var smallIcon = new Drawing.Icon(icon, 16, 16);
+        menuIcons.Add("languages", smallIcon.ToBitmap());
         menu = new Forms.ContextMenuStrip();
         foreach (var command in CommandInfo.All)
         {
-            var item = new Forms.ToolStripMenuItem(command.Title);
-            item.Image = IconBitmap(command.Icon);
+            if (!menuIcons.TryGetValue(command.Icon, out var image))
+            {
+                image = IconBitmap(command.Icon);
+                menuIcons.Add(command.Icon, image);
+            }
+            var item = new Forms.ToolStripMenuItem(command.Title) { Image = image };
             item.Click += (_, _) =>
             {
                 if (trayForeground != 0) Native.SetForegroundWindow(trayForeground);
@@ -181,14 +188,7 @@ public partial class App : Application
             current.Token.ThrowIfCancellationRequested();
             if (region is null) return;
             anchor = region.Anchor;
-            var settingsHandle = settings is { IsVisible: true } window ? Native.WindowHandle(window) : 0;
-            var excluded = settingsHandle != 0 && Native.SetWindowDisplayAffinity(settingsHandle, 0x11);
-            System.Windows.Media.Imaging.BitmapSource pixels;
-            try { pixels = ScreenCapture.Capture(region); }
-            finally
-            {
-                if (excluded) Native.SetWindowDisplayAffinity(settingsHandle, 0);
-            }
+            var pixels = ScreenCapture.Capture(region);
             if (command == Command.ScreenshotTranslate) await ShowTranslationAsync(anchor, image: pixels);
             else
             {
@@ -267,6 +267,7 @@ public partial class App : Application
         shortcuts?.Dispose();
         tray?.Dispose();
         menu?.Dispose();
+        foreach (var image in menuIcons.Values) image.Dispose();
         trayIcon?.Dispose();
         http.Dispose();
         base.OnExit(e);

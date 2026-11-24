@@ -22,7 +22,6 @@ internal static class Native
     [DllImport("user32")] private static extern uint GetDpiForWindow(nint window);
     [DllImport("user32")] private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
     [DllImport("user32")] private static extern bool GetWindowRect(nint window, out WindowRect rect);
-    [DllImport("user32")] internal static extern bool SetWindowDisplayAffinity(nint window, uint affinity);
     [DllImport("dwmapi")] internal static extern int DwmFlush();
 
     private const uint DontSize = 0x0001;
