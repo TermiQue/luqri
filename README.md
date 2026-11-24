@@ -4,7 +4,7 @@ Luqri 是 macOS 原生的菜单栏翻译与文字识别工具，支持划词翻�
 
 ## Windows 原生版
 
-`windows-native` 分支包含基于 WPF 和 Win32 的 Windows 桌面版。启动后在任务栏通知区域打开 Luqri。左键打开设置，右键可运行命令或退出。首次使用时请在设置里填写火山引擎 Access Key ID 和 Secret Access Key，并开通机器翻译和多语种 OCR。机器翻译默认开启，OCR 固定使用火山引擎。翻译文本和框选截图会分别发送给对应的火山引擎接口，密钥由 Windows DPAPI 加密后保存在 `%LOCALAPPDATA%\Luqri`。
+`Windows` 分支包含基于 WPF 和 Win32 的 Windows 桌面版。启动后在任务栏通知区域打开 Luqri。左键打开设置，右键可运行命令或退出。首次使用时请在设置里填写火山引擎 Access Key ID 和 Secret Access Key，并开通机器翻译和多语种 OCR。机器翻译默认开启，OCR 固定使用火山引擎。翻译文本和框选截图会分别发送给对应的火山引擎接口，密钥由 Windows DPAPI 加密后保存在 `%LOCALAPPDATA%\Luqri`。
 
 | 默认快捷键 | 操作 |
 | --- | --- |
