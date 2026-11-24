@@ -3,3 +3,5 @@
 DerivedData/
 xcuserdata/
 *.xcuserstate
+/Windows/bin/
+/Windows/obj/

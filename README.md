@@ -2,6 +2,35 @@
 
 Luqri 是 macOS 原生的菜单栏翻译与文字识别工具，支持划词翻译、截图 OCR 和截图翻译。使用 Swift、AppKit 和 SwiftUI，翻译浮窗、截图和 OCR 均按需运行。
 
+## Windows 原生版
+
+`windows-native` 分支包含基于 WPF 和 Win32 的 Windows 桌面版。启动后在任务栏通知区域打开 Luqri。左键打开设置，右键可运行命令或退出。首次使用时请在设置里填写火山引擎 Access Key ID 和 Secret Access Key，并开通机器翻译和多语种 OCR。机器翻译默认开启，OCR 固定使用火山引擎。翻译文本和框选截图会分别发送给对应的火山引擎接口，密钥由 Windows DPAPI 加密后保存在 `%LOCALAPPDATA%\Luqri`。
+
+| 默认快捷键 | 操作 |
+| --- | --- |
+| `Alt+D` | 翻译当前选区。读不到文字时打开输入浮窗。 |
+| `Alt+S` | 框选截图，显示识别出的原文并翻译。 |
+| `Alt+W` | 框选截图，将识别出的文字复制到剪贴板。 |
+| `Enter` / `Ctrl+Enter` | 翻译当前输入，`Shift+Enter` 换行。 |
+| `Esc` | 取消截图或快捷键录制，关闭浮窗或设置。 |
+| `Ctrl+,` / `Ctrl+W` / `Ctrl+Q` | 从浮窗打开设置、关闭当前窗口、退出 Luqri。 |
+| `Ctrl+M` / `Ctrl+H` | 最小化设置窗口、隐藏 Luqri 窗口。 |
+
+可在设置中重新录制三组全局快捷键。划词优先使用 Windows UI 自动化，读不到时尝试模拟 `Ctrl+C` 并恢复剪贴板。Windows 剪贴板历史可能记录临时复制的文字。朗读使用已安装的中英文桌面语音。设置里的用量环显示当月已入账字符数，查询需要账单明细权限。
+
+### 构建 Windows 版
+
+在 Windows 上安装 .NET 10 SDK，在仓库根目录运行以下命令。脚本默认生成 x64 自包含目录，目标电脑可直接运行目录中的 `Luqri.exe`。
+
+```powershell
+.\scripts\build-windows.ps1 -Package
+.\.build\Luqri-win-x64\Luqri.exe --settings
+```
+
+`-Runtime win-arm64` 可构建 ARM64 版。`-Package` 额外生成 ZIP 和 SHA-256 校验文件。
+
+以下安装和构建说明适用于 macOS 版。
+
 ## 界面截图
 
 ### 翻译浮窗

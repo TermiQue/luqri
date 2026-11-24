@@ -1,0 +1,181 @@
+<Window x:Class="Luqri.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Luqri"
+        Title="Luqri 设置" Width="466" Height="622" ResizeMode="CanMinimize"
+        PreviewKeyDown="OnKeyDown" Deactivated="OnDeactivated" Closed="OnClosed"
+        Background="{DynamicResource Surface}" Foreground="{DynamicResource Ink}"
+        FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" UseLayoutRounding="True">
+    <Window.Resources>
+        <Style x:Key="Section" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="10,0,0,8"/>
+        </Style>
+        <Style x:Key="Group" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource SettingsCard}"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Margin" Value="0,0,0,28"/>
+        </Style>
+        <Style x:Key="Row" TargetType="DockPanel">
+            <Setter Property="MinHeight" Value="37"/>
+        </Style>
+        <Style x:Key="Divider" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource Line}"/>
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Opacity" Value="0.55"/>
+        </Style>
+        <Style TargetType="Label">
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Height" Value="25"/>
+            <Setter Property="Padding" Value="5,2"/>
+            <Setter Property="Background" Value="{DynamicResource Surface}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="MinWidth" Value="100"/>
+            <Setter Property="MinHeight" Value="24"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Right"/>
+            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Focusable="False" ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="ButtonPlate" Background="Transparent" CornerRadius="6">
+                                            <Border Width="19" Height="19" CornerRadius="9.5" HorizontalAlignment="Right"
+                                                    Margin="0,0,2,0" Background="{DynamicResource ButtonFill}">
+                                                <local:Icon Glyph="chevron-down" Width="10" Height="10"/>
+                                            </Border>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="ButtonPlate" Property="Background" Value="{DynamicResource Hover}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" Margin="4,0,28,0"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              VerticalAlignment="Center" HorizontalAlignment="Right" IsHitTestVisible="False"/>
+                            <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}" Focusable="False">
+                                <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Line}"
+                                        BorderThickness="1" CornerRadius="6" Padding="3" MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                  Background="{DynamicResource Surface}" Focusable="False">
+        <StackPanel Margin="19,18,19,0">
+            <TextBlock Text="翻译服务" Style="{StaticResource Section}"/>
+            <Border Style="{StaticResource Group}">
+                <StackPanel>
+                    <DockPanel Style="{StaticResource Row}">
+                        <ComboBox x:Name="SourceLanguage" DockPanel.Dock="Right" SelectionChanged="LanguageChanged"
+                                  AutomationProperties.Name="原文语言"/>
+                        <Label Content="原文语言" Target="{Binding ElementName=SourceLanguage}"/>
+                    </DockPanel>
+                    <Border Style="{StaticResource Divider}"/>
+                    <DockPanel Style="{StaticResource Row}">
+                        <ComboBox x:Name="TargetLanguage" DockPanel.Dock="Right" SelectionChanged="LanguageChanged"
+                                  AutomationProperties.Name="译文语言"/>
+                        <Label Content="译文语言" Target="{Binding ElementName=TargetLanguage}"/>
+                    </DockPanel>
+                    <Border Style="{StaticResource Divider}"/>
+                    <DockPanel Style="{StaticResource Row}">
+                        <CheckBox x:Name="EnableCloud" DockPanel.Dock="Right" VerticalAlignment="Center"
+                                  AutomationProperties.Name="启用火山引擎翻译" Checked="CloudChanged" Unchecked="CloudChanged"/>
+                        <Grid x:Name="UsageRing" DockPanel.Dock="Right" Width="21" Height="22" Margin="0,0,8,0"
+                              VerticalAlignment="Center" Background="Transparent" Focusable="True"
+                              ToolTipService.InitialShowDelay="0" ToolTipService.ShowDuration="12000">
+                            <Ellipse Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Line}"/>
+                            <Path x:Name="UsageArc" Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Accent}"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Stretch="None"/>
+                        </Grid>
+                        <TextBlock>
+                            <Run Text="火山引擎"/><Run Text="   "/>
+                            <Hyperlink x:Name="TranslationBilling" Foreground="{DynamicResource Accent}"
+                                       NavigateUri="https://docs.volcengine.com/docs/machine-translation/product-billing"
+                                       RequestNavigate="OpenLink"><Run Text="开通与计费" FontSize="11"/></Hyperlink>
+                        </TextBlock>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="OCR 服务" Style="{StaticResource Section}"/>
+            <Border Style="{StaticResource Group}">
+                <DockPanel Style="{StaticResource Row}">
+                    <TextBlock DockPanel.Dock="Right" Text="火山引擎多语种 OCR"/>
+                    <TextBlock>
+                        <Run Text="识别服务"/><Run Text="   "/>
+                        <Hyperlink Foreground="{DynamicResource Accent}"
+                                   NavigateUri="https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1"
+                                   RequestNavigate="OpenLink"><Run Text="开通与计费" FontSize="11"/></Hyperlink>
+                    </TextBlock>
+                </DockPanel>
+            </Border>
+
+            <TextBlock Text="火山引擎" Style="{StaticResource Section}"/>
+            <Border Style="{StaticResource Group}">
+                <StackPanel>
+                    <Label Content="Access Key ID" Target="{Binding ElementName=AccessKey}" Margin="0,9,0,6"/>
+                    <DockPanel Margin="0,0,0,10">
+                        <Button Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="PasteAccess"
+                                ToolTip="粘贴 Access Key ID" AutomationProperties.Name="粘贴 Access Key ID"><local:Icon Glyph="clipboard-paste"/></Button>
+                        <PasswordBox x:Name="AccessKey" PasswordChanged="CredentialChanged" AutomationProperties.Name="Access Key ID"/>
+                    </DockPanel>
+                    <Border Style="{StaticResource Divider}"/>
+                    <Label Content="Secret Access Key" Target="{Binding ElementName=SecretKey}" Margin="0,9,0,6"/>
+                    <DockPanel Margin="0,0,0,10">
+                        <Button Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="PasteSecret"
+                                ToolTip="粘贴 Secret Access Key" AutomationProperties.Name="粘贴 Secret Access Key"><local:Icon Glyph="clipboard-paste"/></Button>
+                        <PasswordBox x:Name="SecretKey" PasswordChanged="CredentialChanged" AutomationProperties.Name="Secret Access Key"/>
+                    </DockPanel>
+                    <Border Style="{StaticResource Divider}"/>
+                    <DockPanel Margin="0,10">
+                        <Button x:Name="SaveKeys" Style="{StaticResource FlatButton}" DockPanel.Dock="Right" Content="保存密钥" Click="SaveCredentials"/>
+                        <Button x:Name="RemoveKeys" Style="{StaticResource FlatButton}" DockPanel.Dock="Right" Content="移除密钥"
+                                Click="RemoveCredentials" Foreground="{DynamicResource Danger}" Margin="0,0,8,0"/>
+                        <TextBlock x:Name="CredentialStatus" Margin="0,0,8,0" Foreground="{DynamicResource Muted}"
+                                   FontSize="12" TextWrapping="Wrap"/>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="快捷键" Style="{StaticResource Section}"/>
+            <Border Style="{StaticResource Group}">
+                <StackPanel x:Name="ShortcutRows">
+                    <DockPanel Margin="0,8">
+                        <Button Style="{StaticResource FlatButton}" DockPanel.Dock="Right" Content="恢复默认" Click="RestoreDefaults"/>
+                        <TextBlock x:Name="ShortcutStatus" Margin="0,0,8,0" Foreground="{DynamicResource Muted}"
+                                   FontSize="12" TextWrapping="Wrap"/>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</Window>
