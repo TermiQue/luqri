@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
@@ -37,7 +36,7 @@ public partial class SettingsWindow : Window
     private readonly Dictionary<Command, (Button Button, TextBlock Warning)> shortcutWidgets = new();
     private readonly Dictionary<CloudProvider, Credentials> credentialDrafts = new();
     private CommandInfo? recording;
-    private readonly Dictionary<ContentControl, CancellationTokenSource> usageRequests = new();
+    private readonly Dictionary<ContentControl, (CloudProvider Provider, CancellationTokenSource Cancellation)> usageRequests = new();
     private CloudProvider editingProvider;
     private bool initialized;
 
@@ -375,41 +374,49 @@ public partial class SettingsWindow : Window
         usageCache.Entries.Remove((editingProvider, false));
         usageCache.Entries.Remove((editingProvider, true));
         preferencesChanged();
-        if (preferences.UsesTranslation(editingProvider)) _ = RefreshUsageAsync(editingProvider);
-        if (editingProvider == preferences.OcrProvider) _ = RefreshUsageAsync(editingProvider, ocr: true);
+        if (preferences.UsesTranslation(editingProvider)) _ = RefreshUsageAsync(editingProvider, restart: true);
+        if (editingProvider == preferences.OcrProvider) _ = RefreshUsageAsync(editingProvider, ocr: true, restart: true);
     }
 
-    private async Task RefreshUsageAsync(CloudProvider provider, bool ocr = false)
+    private async Task RefreshUsageAsync(CloudProvider provider, bool ocr = false, bool restart = false)
     {
         var ring = ocr ? OcrUsageRing : provider == CloudProvider.Aliyun ? AliyunUsageRing : VolcengineUsageRing;
-        if (usageRequests.Remove(ring, out var previous)) previous.Cancel();
-        var enabled = ocr ? provider == CloudProvider.Aliyun : preferences.UsesTranslation(provider);
-        ring.Visibility = enabled ? Visibility.Visible : ocr ? Visibility.Collapsed : Visibility.Hidden;
+        var enabled = ocr || preferences.UsesTranslation(provider);
+        ring.Visibility = enabled ? Visibility.Visible : Visibility.Hidden;
+        if (usageRequests.TryGetValue(ring, out var previous))
+        {
+            if (enabled && !restart && previous.Provider == provider) return;
+            usageRequests.Remove(ring);
+            previous.Cancellation.Cancel();
+        }
         if (!enabled) return;
 
         using var current = new CancellationTokenSource();
-        usageRequests[ring] = current;
+        usageRequests[ring] = (provider, current);
         var key = (provider, ocr);
-        var quota = ocr ? Aliyun.FreeOcrCalls : provider == CloudProvider.Aliyun ? Aliyun.FreeCharacters : Volcengine.FreeCharacters;
+        var quota = ocr
+            ? (provider == CloudProvider.Volcengine ? VolcengineOcrUsage.Limit : Aliyun.FreeOcrCalls)
+            : (provider == CloudProvider.Aliyun ? Aliyun.FreeCharacters : Volcengine.FreeCharacters);
         var service = ocr ? "OCR" : "机器翻译";
+        var period = ocr && provider == CloudProvider.Volcengine ? "累计" : "本月";
         decimal? cached = null;
         try
         {
             var credentials = Preferences.ReadCredentials(provider);
             if (credentials is null)
             {
-                DisplayUsage(ring, null, quota, $"保存{CloudServices.Name(provider)}密钥后可查询本月{service}用量。");
+                DisplayUsage(ring, null, quota, $"保存{CloudServices.Name(provider)}密钥后可查询{period}{service}用量。");
                 return;
             }
 
             var now = DateTimeOffset.UtcNow;
-            var month = CloudServices.BillingTime(now).ToString("yyyy-MM", CultureInfo.InvariantCulture);
+            var month = CloudServices.BillingMonth(now);
             if (usageCache.Entries.TryGetValue(key, out var entry) && entry.Credentials == credentials && entry.Month == month)
                 cached = entry.Total;
-            DisplayUsage(ring, cached, quota, $"正在查询本月{service}用量…");
-            var used = ocr
-                ? await cloud.ReadAliyunOcrUsageAsync(credentials, now, current.Token)
-                : await cloud[provider].ReadUsageAsync(credentials, now, current.Token);
+            DisplayUsage(ring, cached, quota, $"正在查询{period}{service}用量…");
+            var backend = cloud[provider];
+            var used = await (ocr ? backend.ReadOcrUsageAsync(credentials, now, current.Token)
+                : backend.ReadTranslationUsageAsync(credentials, now, current.Token));
             if (current.IsCancellationRequested) return;
             usageCache.Entries[key] = (credentials, month, used);
             var tooltip = ocr
@@ -420,11 +427,11 @@ public partial class SettingsWindow : Window
         catch (Exception error)
         {
             if (!current.IsCancellationRequested)
-                DisplayUsage(ring, cached, quota, $"无法查询本月{service}用量。\n{CloudServices.DescribeError(provider, error)}");
+                DisplayUsage(ring, cached, quota, $"无法查询{period}{service}用量。\n{CloudServices.DescribeError(provider, error)}");
         }
         finally
         {
-            if (usageRequests.GetValueOrDefault(ring) == current) usageRequests.Remove(ring);
+            if (usageRequests.GetValueOrDefault(ring).Cancellation == current) usageRequests.Remove(ring);
         }
     }
 
@@ -444,7 +451,7 @@ public partial class SettingsWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
-        foreach (var request in usageRequests.Values.ToArray()) request.Cancel();
+        foreach (var request in usageRequests.Values.ToArray()) request.Cancellation.Cancel();
     }
 
     private void OpenLink(object sender, RequestNavigateEventArgs e)

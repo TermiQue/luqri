@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
 using System.Windows.Media.Imaging;
@@ -11,7 +12,8 @@ internal interface ICloudService
     Task<string> TranslateAsync(string text, TranslationLanguage? source, TranslationLanguage target,
         Credentials credentials, CancellationToken token);
     Task<string> RecognizeAsync(BitmapSource image, Credentials credentials, CancellationToken token);
-    Task<decimal> ReadUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token);
+    Task<decimal> ReadTranslationUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token);
+    Task<decimal> ReadOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token);
 }
 
 internal sealed class CloudServices(HttpClient client)
@@ -22,12 +24,18 @@ internal sealed class CloudServices(HttpClient client)
 
     public ICloudService this[CloudProvider provider] => provider == CloudProvider.Aliyun ? aliyun : volcengine;
 
-    public Task<decimal> ReadAliyunOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
-        aliyun.ReadOcrUsageAsync(credentials, now, token);
-
     public static string Name(CloudProvider provider) => provider == CloudProvider.Aliyun ? "阿里云" : "火山引擎";
 
     public static DateTimeOffset BillingTime(DateTimeOffset time) => time.ToOffset(TimeSpan.FromHours(8));
+
+    public static string BillingMonth(DateTimeOffset time) =>
+        BillingTime(time).ToString("yyyy-MM", CultureInfo.InvariantCulture);
+
+    public static DateTimeOffset BillingMonthStart(DateTimeOffset time)
+    {
+        var local = BillingTime(time);
+        return new(local.Year, local.Month, 1, 0, 0, 0, local.Offset);
+    }
 
     public static string DescribeError(CloudProvider provider, Exception error) => error switch
     {
@@ -54,5 +62,17 @@ internal sealed class CloudServices(HttpClient client)
             start = end;
         }
         yield return text[start..];
+    }
+}
+
+internal static class CloudJson
+{
+    public static JsonElement Field(JsonElement value, string name) =>
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out var field) ? field : default;
+
+    public static string? String(JsonElement value, string name)
+    {
+        var field = Field(value, name);
+        return field.ValueKind == JsonValueKind.String ? field.GetString() : null;
     }
 }

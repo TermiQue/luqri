@@ -159,8 +159,7 @@
                 <DockPanel Style="{StaticResource Row}">
                     <ComboBox x:Name="OcrProvider" DockPanel.Dock="Right" Width="100" SelectionChanged="OcrProviderChanged"
                               AutomationProperties.Name="OCR 服务商"/>
-                    <ContentControl x:Name="OcrUsageRing" DockPanel.Dock="Right" Style="{StaticResource UsageRingStyle}"
-                                    Visibility="Collapsed"/>
+                    <ContentControl x:Name="OcrUsageRing" DockPanel.Dock="Right" Style="{StaticResource UsageRingStyle}"/>
                     <TextBlock>
                         <Run Text="识别服务"/><Run Text="   "/>
                         <Hyperlink x:Name="OcrBilling" Foreground="{DynamicResource Accent}"

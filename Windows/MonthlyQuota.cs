@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -52,7 +51,7 @@ internal sealed class MonthlyQuota(string filePrefix, string title, decimal limi
                 {
                     throw new InvalidOperationException($"无法确认{title}额度，已跳过请求。{error.Message}", error);
                 }
-                if (state.Month != CurrentMonth(DateTimeOffset.UtcNow)) continue;
+                if (state.Month != CloudServices.BillingMonth(DateTimeOffset.UtcNow)) continue;
                 token.ThrowIfCancellationRequested();
                 RequireCapacity(state.Used, amount);
 
@@ -89,7 +88,7 @@ internal sealed class MonthlyQuota(string filePrefix, string title, decimal limi
 
     private State GetState(Credentials credentials, DateTimeOffset now)
     {
-        var month = CurrentMonth(now);
+        var month = CloudServices.BillingMonth(now);
         var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(credentials.AccessKey)));
         var path = Preferences.QuotaPath($"{filePrefix}-{fingerprint}.usage.json");
         if (states.TryGetValue(path, out var current) && current.Month == month) return current;
@@ -103,9 +102,6 @@ internal sealed class MonthlyQuota(string filePrefix, string title, decimal limi
         }
         return states[path] = new(path, month, used);
     }
-
-    private static string CurrentMonth(DateTimeOffset now) =>
-        CloudServices.BillingTime(now).ToString("yyyy-MM", CultureInfo.InvariantCulture);
 
     private static void Store(State state, decimal used)
     {

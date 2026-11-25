@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using static Luqri.CloudJson;
 
 namespace Luqri;
 
@@ -81,13 +82,13 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
         }, token).ConfigureAwait(false);
     }
 
-    public Task<decimal> ReadUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
+    public Task<decimal> ReadTranslationUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
         translationQuota.ReadAsync(credentials, now, QueryUsageAsync, token);
 
     private async Task<decimal> QueryUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
     {
         var end = CloudServices.BillingTime(now);
-        var begin = new DateTimeOffset(end.Year, end.Month, 1, 0, 0, 0, end.Offset);
+        var begin = CloudServices.BillingMonthStart(now);
         var parameters = new Dictionary<string, string>
         {
             ["ApiName"] = "translate_standard", ["Group"] = "day",
@@ -114,9 +115,8 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
 
     private async Task<decimal> QueryOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
     {
-        var local = CloudServices.BillingTime(now);
         var end = DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds());
-        var start = new DateTimeOffset(local.Year, local.Month, 1, 0, 0, 0, local.Offset);
+        var start = CloudServices.BillingMonthStart(now);
         var requests = new HashSet<string>(StringComparer.Ordinal);
         for (var begin = start; begin < end;)
         {
@@ -301,18 +301,14 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
         _ => throw new JsonException("Missing response data.")
     };
 
-    private static JsonElement Field(JsonElement value, string name) =>
-        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out var field) ? field : default;
-
-    private static string? String(JsonElement value, string name)
-    {
-        var field = Field(value, name);
-        return field.ValueKind == JsonValueKind.String ? field.GetString() : null;
-    }
-
     private static string? Scalar(JsonElement value, string name)
     {
         var field = Field(value, name);
-        return field.ValueKind == JsonValueKind.Number ? field.GetRawText() : String(value, name);
+        return field.ValueKind switch
+        {
+            JsonValueKind.Number => field.GetRawText(),
+            JsonValueKind.String => field.GetString(),
+            _ => null
+        };
     }
 }

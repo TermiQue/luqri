@@ -28,15 +28,6 @@ public partial class TranslationWindow : Window
         this.cloud = cloud;
         this.openSettings = openSettings;
         InitializeComponent();
-        foreach (var provider in CloudServices.Providers)
-        {
-            var card = new TranslationResultCard(provider);
-            card.Collapsed += result => { if (speakingResult == result) StopSpeech(); };
-            card.CopyRequested += result => Copy(result.Result.Text, result.ResultCopyIcon);
-            card.SpeakRequested += result => Speak(result.Result.Text, resultLanguage, result);
-            results.Add(provider, card);
-            ServiceCards.Children.Add(card);
-        }
         initialized = true;
         Loaded += (_, _) => Editor.Focus();
         UpdateControls();
@@ -98,7 +89,7 @@ public partial class TranslationWindow : Window
         var source = TranslationLanguage.Find(preferences.Source);
         var target = TranslationLanguage.Find(preferences.Target) ?? TranslationLanguage.TargetFor(input, source);
         resultLanguage = target;
-        foreach (var provider in providers) results[provider].BeginTranslation();
+        foreach (var provider in providers) GetResultCard(provider).BeginTranslation();
         UpdateControls();
         try
         {
@@ -151,7 +142,7 @@ public partial class TranslationWindow : Window
         CancelWork();
         inputError = null;
         StopSpeech();
-        ClearResult();
+        if (resultLanguage is not null) ClearResult();
         SourceCopyIcon.Glyph = "copy";
         SetNotice(null);
         UpdateControls();
@@ -159,20 +150,39 @@ public partial class TranslationWindow : Window
 
     private void UpdateControls()
     {
-        var hasText = !string.IsNullOrWhiteSpace(Editor.Text);
+        var text = Editor.Text;
+        var hasText = !string.IsNullOrWhiteSpace(text);
         var hasProvider = CloudServices.Providers.Any(preferences.UsesTranslation);
         Editor.IsReadOnly = loadingInput;
-        Placeholder.Visibility = Editor.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        Placeholder.Visibility = text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         Placeholder.Text = loadingInput ? "正在识别文字…" : inputError ?? "输入或粘贴文字…";
         SourceSpeak.IsEnabled = SourceCopy.IsEnabled = hasText;
         TranslateButton.IsEnabled = hasText && !loadingInput && work is null && hasProvider;
         PasteButton.IsEnabled = !loadingInput;
         DisabledCard.Visibility = hasProvider ? Visibility.Collapsed : Visibility.Visible;
-        foreach (var (provider, card) in results)
+        foreach (var provider in CloudServices.Providers)
         {
-            card.Visibility = preferences.UsesTranslation(provider) ? Visibility.Visible : Visibility.Collapsed;
-            card.UpdateLayoutState(hasText);
+            if (preferences.UsesTranslation(provider))
+            {
+                var card = GetResultCard(provider);
+                card.Visibility = Visibility.Visible;
+                card.UpdateLayoutState(hasText);
+            }
+            else if (results.TryGetValue(provider, out var card)) card.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private TranslationResultCard GetResultCard(CloudProvider provider)
+    {
+        if (results.TryGetValue(provider, out var existing)) return existing;
+        var card = new TranslationResultCard(provider);
+        card.Collapsed += result => { if (speakingResult == result) StopSpeech(); };
+        card.CopyRequested += result => Copy(result.Result.Text, result.ResultCopyIcon);
+        card.SpeakRequested += result => Speak(result.Result.Text, resultLanguage, result);
+        results.Add(provider, card);
+        var index = provider == CloudProvider.Volcengine ? 0 : ServiceCards.Children.Count;
+        ServiceCards.Children.Insert(index, card);
+        return card;
     }
 
     private void OnKeyDown(object sender, KeyEventArgs e)
