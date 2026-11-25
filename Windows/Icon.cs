@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
@@ -23,8 +24,18 @@ public sealed class Icon : Shape
     internal static Geometry DrawingFor(string glyph)
     {
         if (Icons.TryGetValue(glyph, out var cached)) return cached;
-        var resource = Application.GetResourceStream(new Uri($"Icons/{glyph}.svg", UriKind.Relative));
-        using var stream = resource.Stream;
+        try { return Icons[glyph] = LoadDrawing(glyph); }
+        catch (IOException error)
+        {
+            Trace.TraceWarning("Unable to load icon '{0}': {1}", glyph, error.Message);
+            return Icons[glyph] = Geometry.Empty;
+        }
+    }
+
+    private static Geometry LoadDrawing(string glyph)
+    {
+        using var stream = Application.GetResourceStream(new Uri($"Icons/{glyph}.svg", UriKind.Relative))?.Stream
+            ?? throw new FileNotFoundException($"Icon resource '{glyph}' was not found.");
         var svg = XElement.Load(stream);
         var drawing = new GeometryGroup();
         foreach (var part in svg.Elements())
@@ -45,6 +56,6 @@ public sealed class Icon : Shape
             new PathFigure(new Point(0, 0), [new LineSegment(new Point(24, 24), false)], false) { IsFilled = false }
         ]));
         drawing.Freeze();
-        return Icons[glyph] = drawing;
+        return drawing;
     }
 }
