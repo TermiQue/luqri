@@ -1,0 +1,103 @@
+<Window x:Class="Luqri.TranslationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Luqri"
+        Title="Luqri 翻译" Width="420" SizeToContent="Height" WindowStyle="None"
+        ResizeMode="NoResize" AllowsTransparency="True" ShowInTaskbar="False"
+        Topmost="True" Background="Transparent"
+        PreviewKeyDown="OnKeyDown" Deactivated="OnDeactivated" Closed="OnClosed">
+    <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Line}"
+            BorderThickness="1" CornerRadius="13" Padding="11">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Focusable="False">
+            <StackPanel>
+                <DockPanel LastChildFill="True" Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                        <Button x:Name="PinButton" Style="{StaticResource IconButton}" Click="TogglePin"
+                                ToolTip="置顶浮窗" AutomationProperties.Name="置顶浮窗"><local:Icon x:Name="PinIcon" Glyph="pin"/></Button>
+                        <Button Style="{StaticResource IconButton}" Click="OpenSettings"
+                                ToolTip="设置" AutomationProperties.Name="设置"><local:Icon Glyph="settings"/></Button>
+                        <Button Style="{StaticResource IconButton}" Click="CloseWindow" Margin="0"
+                                ToolTip="关闭" AutomationProperties.Name="关闭"><local:Icon Glyph="x"/></Button>
+                    </StackPanel>
+                    <Border Background="Transparent" MouseLeftButtonDown="DragHeader">
+                        <TextBlock Text="翻译" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </Border>
+                </DockPanel>
+
+                <Border x:Name="EditorCard" Background="{DynamicResource Card}" CornerRadius="9"
+                        BorderThickness="1" Padding="7">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="BorderBrush" Value="Transparent"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                    <Setter Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <Grid>
+                            <TextBox x:Name="Editor" Style="{StaticResource TextEditor}" FontSize="15"
+                                     MinHeight="72" MaxHeight="176" AcceptsReturn="True"
+                                     AutomationProperties.Name="原文" TextChanged="OnEdited"/>
+                            <TextBlock x:Name="Placeholder" Text="输入或粘贴文字…" Foreground="{DynamicResource Muted}"
+                                       FontSize="15" Margin="10,0,3,0" VerticalAlignment="Top"
+                                       IsHitTestVisible="False" TextWrapping="Wrap"/>
+                        </Grid>
+                        <DockPanel Margin="0,6,0,0" LastChildFill="False">
+                            <Button x:Name="TranslateButton" Style="{StaticResource AccentButton}" DockPanel.Dock="Right"
+                                    Click="OnTranslate" ToolTip="翻译（Ctrl+Enter）" Content="翻译"/>
+                            <Button x:Name="SourceSpeak" Style="{StaticResource IconButton}"
+                                    Click="SpeakSource" ToolTip="朗读原文" AutomationProperties.Name="朗读原文"><local:Icon x:Name="SourceSpeaker" Glyph="volume-2"/></Button>
+                            <Button x:Name="SourceCopy" Style="{StaticResource IconButton}"
+                                    Click="CopySource" ToolTip="复制原文" AutomationProperties.Name="复制原文"><local:Icon x:Name="SourceCopyIcon" Glyph="copy"/></Button>
+                            <Button x:Name="PasteButton" Style="{StaticResource IconButton}"
+                                    Click="PasteAndTranslate" ToolTip="翻译剪贴板" AutomationProperties.Name="翻译剪贴板"><local:Icon Glyph="clipboard-paste"/></Button>
+                        </DockPanel>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock x:Name="Notice" TextWrapping="Wrap" Foreground="{DynamicResource Muted}"
+                           Margin="3,8,3,0" Visibility="Collapsed" FontSize="13"/>
+
+                <Border x:Name="ServiceCard" Background="{DynamicResource Card}" CornerRadius="9" Margin="0,8,0,0">
+                    <StackPanel>
+                        <Button x:Name="ServiceHeader" Style="{StaticResource FlatButton}" Background="Transparent"
+                                Height="34" HorizontalContentAlignment="Stretch" Padding="9,0"
+                                AutomationProperties.Name="火山引擎" Click="ToggleResult">
+                            <DockPanel>
+                                <local:Icon x:Name="Chevron" DockPanel.Dock="Right" Width="13" Height="13"
+                                            Stroke="{DynamicResource Muted}" Glyph="chevron-right"/>
+                                <local:Icon DockPanel.Dock="Left" Stroke="{DynamicResource Accent}" Glyph="flame" Margin="0,0,8,0"/>
+                                <TextBlock Text="火山引擎" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </DockPanel>
+                        </Button>
+                        <StackPanel x:Name="ResultPanel" Visibility="Collapsed" Margin="10,0,10,8">
+                            <Border Background="{DynamicResource Line}" Height="1" Margin="0,0,0,7"/>
+                            <TextBlock x:Name="ResultStatus" Margin="1,0" TextWrapping="Wrap" Foreground="{DynamicResource Muted}"/>
+                            <TextBox x:Name="Result" Style="{StaticResource TextEditor}" BorderThickness="0"
+                                     Padding="0" FontSize="14" MaxHeight="220" IsReadOnly="True" Visibility="Collapsed"
+                                     AutomationProperties.Name="译文"/>
+                            <StackPanel x:Name="ResultActions" Orientation="Horizontal" Margin="0,5,0,0" Visibility="Collapsed">
+                                <Button Style="{StaticResource IconButton}" Click="SpeakResult" x:Name="ResultSpeak"
+                                        ToolTip="朗读译文" AutomationProperties.Name="朗读译文"><local:Icon x:Name="ResultSpeaker" Glyph="volume-2"/></Button>
+                                <Button Style="{StaticResource IconButton}" Click="CopyResult" x:Name="ResultCopy"
+                                        ToolTip="复制译文" AutomationProperties.Name="复制译文"><local:Icon x:Name="ResultCopyIcon" Glyph="copy"/></Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="DisabledCard" Background="{DynamicResource Card}" CornerRadius="9"
+                        Margin="0,8,0,0" Padding="10,5" Visibility="Collapsed">
+                    <DockPanel>
+                        <Button Style="{StaticResource FlatButton}" DockPanel.Dock="Right" Content="打开设置" Click="OpenSettings"/>
+                        <TextBlock Text="请先开启翻译服务" Foreground="{DynamicResource Muted}" VerticalAlignment="Center"/>
+                    </DockPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</Window>
