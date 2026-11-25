@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
@@ -12,23 +11,36 @@ namespace Luqri;
 
 internal sealed class UsageCache
 {
-    public (Credentials Credentials, string Month, decimal Characters)? Entry { get; set; }
+    public Dictionary<(CloudProvider Provider, bool Ocr), (Credentials Credentials, string Month, decimal Total)> Entries { get; } = new();
 }
 
 public partial class SettingsWindow : Window
 {
+    private sealed record ProviderChoice(CloudProvider Value, string Title)
+    {
+        public override string ToString() => Title;
+    }
+
+    private static readonly ProviderChoice[] Providers =
+    [
+        new(CloudProvider.Volcengine, CloudServices.Name(CloudProvider.Volcengine)),
+        new(CloudProvider.Aliyun, CloudServices.Name(CloudProvider.Aliyun))
+    ];
+
     private readonly Preferences preferences;
     private readonly GlobalShortcuts shortcuts;
-    private readonly Volcengine cloud;
+    private readonly CloudServices cloud;
     private readonly UsageCache usageCache;
     private readonly Action preferencesChanged;
     private readonly Action bindingsChanged;
     private readonly Dictionary<Command, (Button Button, TextBlock Warning)> shortcutWidgets = new();
+    private readonly Dictionary<CloudProvider, Credentials> credentialDrafts = new();
     private CommandInfo? recording;
-    private CancellationTokenSource? usageRequest;
+    private readonly Dictionary<ContentControl, (CloudProvider Provider, CancellationTokenSource Cancellation)> usageRequests = new();
+    private CloudProvider editingProvider;
     private bool initialized;
 
-    internal SettingsWindow(Preferences preferences, GlobalShortcuts shortcuts, Volcengine cloud,
+    internal SettingsWindow(Preferences preferences, GlobalShortcuts shortcuts, CloudServices cloud,
         UsageCache usageCache, Action preferencesChanged, Action bindingsChanged)
     {
         this.preferences = preferences;
@@ -44,13 +56,38 @@ public partial class SettingsWindow : Window
 
         PopulateLanguage(SourceLanguage, "自动检测", preferences.Source);
         PopulateLanguage(TargetLanguage, "自动选择", preferences.Target);
-        EnableCloud.IsChecked = preferences.TranslationEnabled;
+        PopulateProvider(OcrProvider, preferences.OcrProvider);
+        editingProvider = preferences.UsesTranslation(CloudProvider.Aliyun) ? CloudProvider.Aliyun : preferences.OcrProvider;
+        PopulateProvider(CredentialProvider, editingProvider);
+        UpdateBillingLinks();
+        EnableVolcengine.IsChecked = preferences.UsesTranslation(CloudProvider.Volcengine);
+        EnableAliyun.IsChecked = preferences.UsesTranslation(CloudProvider.Aliyun);
         BuildShortcutRows();
         LoadCredentials();
         initialized = true;
         UpdateCredentialControls();
         UpdateShortcuts();
-        Loaded += (_, _) => _ = RefreshUsageAsync();
+        Activated += (_, _) =>
+        {
+            foreach (var provider in CloudServices.Providers) _ = RefreshUsageAsync(provider);
+            _ = RefreshUsageAsync(preferences.OcrProvider, ocr: true);
+        };
+    }
+
+    private static void PopulateProvider(ComboBox box, CloudProvider value)
+    {
+        box.ItemsSource = Providers;
+        SelectProvider(box, value);
+    }
+
+    private static void SelectProvider(ComboBox box, CloudProvider value) =>
+        box.SelectedItem = Providers.First(choice => choice.Value == value);
+
+    private void UpdateBillingLinks()
+    {
+        OcrBilling.NavigateUri = new(preferences.OcrProvider == CloudProvider.Aliyun
+            ? "https://help.aliyun.com/zh/ocr/developer-reference/api-ocr-api-2021-07-07-recognizealltext"
+            : "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1");
     }
 
     private static void PopulateLanguage(ComboBox box, string automatic, string? code)
@@ -197,19 +234,39 @@ public partial class SettingsWindow : Window
         initialized = true;
     }
 
-    private void CloudChanged(object sender, RoutedEventArgs e)
+    private void TranslationChanged(object sender, RoutedEventArgs e)
     {
         if (!initialized) return;
-        var previous = preferences.TranslationEnabled;
-        preferences.TranslationEnabled = EnableCloud.IsChecked == true;
-        if (SavePreferences()) _ = RefreshUsageAsync();
+        var provider = sender == EnableAliyun ? CloudProvider.Aliyun : CloudProvider.Volcengine;
+        var previous = preferences.TranslationProviders;
+        preferences.TranslationProviders = CloudServices.Providers.Where(item =>
+            (item == CloudProvider.Aliyun ? EnableAliyun : EnableVolcengine).IsChecked == true).ToArray();
+        if (SavePreferences()) _ = RefreshUsageAsync(provider);
         else
         {
-            preferences.TranslationEnabled = previous;
+            preferences.TranslationProviders = previous;
             initialized = false;
-            EnableCloud.IsChecked = previous;
+            ((CheckBox)sender).IsChecked = preferences.UsesTranslation(provider);
             initialized = true;
         }
+    }
+
+    private void OcrProviderChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!initialized || OcrProvider.SelectedItem is not ProviderChoice choice) return;
+        var previous = preferences.OcrProvider;
+        preferences.OcrProvider = choice.Value;
+        if (SavePreferences())
+        {
+            UpdateBillingLinks();
+            _ = RefreshUsageAsync(choice.Value, ocr: true);
+            return;
+        }
+
+        preferences.OcrProvider = previous;
+        initialized = false;
+        SelectProvider(OcrProvider, previous);
+        initialized = true;
     }
 
     private bool SavePreferences()
@@ -226,22 +283,38 @@ public partial class SettingsWindow : Window
 
     private void LoadCredentials()
     {
+        CredentialStatus.Text = "";
         try
         {
-            var credentials = Preferences.ReadCredentials();
-            AccessKey.Password = credentials?.AccessKey ?? "";
-            SecretKey.Password = credentials?.SecretKey ?? "";
+            var credentials = Preferences.ReadCredentials(editingProvider);
+            var fields = credentialDrafts.GetValueOrDefault(editingProvider) ?? credentials;
+            AccessKey.Password = fields?.AccessKey ?? "";
+            SecretKey.Password = fields?.SecretKey ?? "";
             RemoveKeys.Visibility = credentials is null ? Visibility.Collapsed : Visibility.Visible;
         }
         catch (Exception error)
         {
+            AccessKey.Clear();
+            SecretKey.Clear();
             RemoveKeys.Visibility = Visibility.Visible;
             CredentialStatus.Text = $"无法读取密钥。{error.Message}";
         }
     }
 
-    private void UpdateCredentialControls() => SaveKeys.IsEnabled =
-        !string.IsNullOrWhiteSpace(AccessKey.Password) && !string.IsNullOrWhiteSpace(SecretKey.Password);
+    private void CredentialProviderChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!initialized || CredentialProvider.SelectedItem is not ProviderChoice choice) return;
+        credentialDrafts[editingProvider] = new(AccessKey.Password, SecretKey.Password);
+        editingProvider = choice.Value;
+        LoadCredentials();
+    }
+
+    private void UpdateCredentialControls()
+    {
+        CopyAccessKey.IsEnabled = !string.IsNullOrWhiteSpace(AccessKey.Password);
+        CopySecretKey.IsEnabled = !string.IsNullOrWhiteSpace(SecretKey.Password);
+        SaveKeys.IsEnabled = CopyAccessKey.IsEnabled && CopySecretKey.IsEnabled;
+    }
 
     private void CredentialChanged(object sender, RoutedEventArgs e)
     {
@@ -250,6 +323,18 @@ public partial class SettingsWindow : Window
 
     private void PasteAccess(object sender, RoutedEventArgs e) => PasteKey(AccessKey);
     private void PasteSecret(object sender, RoutedEventArgs e) => PasteKey(SecretKey);
+    private void CopyAccess(object sender, RoutedEventArgs e) => CopyKey(AccessKey);
+    private void CopySecret(object sender, RoutedEventArgs e) => CopyKey(SecretKey);
+
+    private void CopyKey(PasswordBox field)
+    {
+        try
+        {
+            Clipboard.SetText(field.Password);
+            CredentialStatus.Text = "已复制密钥";
+        }
+        catch (ExternalException) { CredentialStatus.Text = "无法写入剪贴板，请重试。"; }
+    }
 
     private void PasteKey(PasswordBox field)
     {
@@ -261,7 +346,7 @@ public partial class SettingsWindow : Window
     {
         try
         {
-            Preferences.SaveCredentials(new(AccessKey.Password.Trim(), SecretKey.Password.Trim()));
+            Preferences.SaveCredentials(editingProvider, new(AccessKey.Password.Trim(), SecretKey.Password.Trim()));
             RemoveKeys.Visibility = Visibility.Visible;
             CredentialStatus.Text = "密钥已保存";
             CredentialsChanged();
@@ -273,7 +358,7 @@ public partial class SettingsWindow : Window
     {
         try
         {
-            Preferences.RemoveCredentials();
+            Preferences.RemoveCredentials(editingProvider);
             AccessKey.Clear();
             SecretKey.Clear();
             RemoveKeys.Visibility = Visibility.Collapsed;
@@ -285,66 +370,89 @@ public partial class SettingsWindow : Window
 
     private void CredentialsChanged()
     {
-        usageCache.Entry = null;
+        credentialDrafts.Remove(editingProvider);
+        usageCache.Entries.Remove((editingProvider, false));
+        usageCache.Entries.Remove((editingProvider, true));
         preferencesChanged();
-        _ = RefreshUsageAsync();
+        if (preferences.UsesTranslation(editingProvider)) _ = RefreshUsageAsync(editingProvider, restart: true);
+        if (editingProvider == preferences.OcrProvider) _ = RefreshUsageAsync(editingProvider, ocr: true, restart: true);
     }
 
-    private async Task RefreshUsageAsync()
+    private async Task RefreshUsageAsync(CloudProvider provider, bool ocr = false, bool restart = false)
     {
-        usageRequest?.Cancel();
-        usageRequest = null;
-        UsageRing.Visibility = preferences.TranslationEnabled ? Visibility.Visible : Visibility.Hidden;
-        TranslationBilling.IsEnabled = preferences.TranslationEnabled;
-        if (!preferences.TranslationEnabled) return;
+        var ring = ocr ? OcrUsageRing : provider == CloudProvider.Aliyun ? AliyunUsageRing : VolcengineUsageRing;
+        var enabled = ocr || preferences.UsesTranslation(provider);
+        ring.Visibility = enabled ? Visibility.Visible : Visibility.Hidden;
+        if (usageRequests.TryGetValue(ring, out var previous))
+        {
+            if (enabled && !restart && previous.Provider == provider) return;
+            usageRequests.Remove(ring);
+            previous.Cancellation.Cancel();
+        }
+        if (!enabled) return;
 
-        var current = usageRequest = new CancellationTokenSource();
+        using var current = new CancellationTokenSource();
+        usageRequests[ring] = (provider, current);
+        var key = (provider, ocr);
+        var quota = ocr
+            ? (provider == CloudProvider.Volcengine ? VolcengineOcrUsage.Limit : Aliyun.FreeOcrCalls)
+            : (provider == CloudProvider.Aliyun ? Aliyun.FreeCharacters : Volcengine.FreeCharacters);
+        var service = ocr ? "OCR" : "机器翻译";
+        var period = ocr && provider == CloudProvider.Volcengine ? "累计" : "本月";
         decimal? cached = null;
         try
         {
-            var credentials = Preferences.ReadCredentials();
+            var credentials = Preferences.ReadCredentials(provider);
             if (credentials is null)
             {
-                DisplayUsage(null, "保存火山引擎密钥后可查询本月用量。");
+                DisplayUsage(ring, null, quota, $"保存{CloudServices.Name(provider)}密钥后可查询{period}{service}用量。");
                 return;
             }
 
-            var month = Volcengine.BillingPeriod(DateTimeOffset.UtcNow);
-            if (usageCache.Entry is { } entry && entry.Credentials == credentials && entry.Month == month)
-                cached = entry.Characters;
-            DisplayUsage(cached, "正在查询本月机器翻译用量…");
-            var used = await cloud.ReadUsageAsync(credentials, month, current.Token);
+            var now = DateTimeOffset.UtcNow;
+            var month = CloudServices.BillingMonth(now);
+            if (usageCache.Entries.TryGetValue(key, out var entry) && entry.Credentials == credentials && entry.Month == month)
+                cached = entry.Total;
+            DisplayUsage(ring, cached, quota, $"正在查询{period}{service}用量…");
+            var backend = cloud[provider];
+            var used = await (ocr ? backend.ReadOcrUsageAsync(credentials, now, current.Token)
+                : backend.ReadTranslationUsageAsync(credentials, now, current.Token));
             if (current.IsCancellationRequested) return;
-            usageCache.Entry = (credentials, month, used);
-            DisplayUsage(used, (used / 10000).ToString("N2", CultureInfo.CurrentCulture) + " / 200.00 万字符");
+            usageCache.Entries[key] = (credentials, month, used);
+            var tooltip = ocr
+                ? FormattableString.Invariant($"{used:0}/{quota:0}次")
+                : FormattableString.Invariant($"{used / 10000:0.00}/{quota / 10000:0.00}万字符");
+            DisplayUsage(ring, used, quota, tooltip);
         }
         catch (Exception error)
         {
             if (!current.IsCancellationRequested)
-                DisplayUsage(cached, $"无法查询本月用量。\n{Volcengine.DescribeError(error)}");
+                DisplayUsage(ring, cached, quota, $"无法查询{period}{service}用量。\n{CloudServices.DescribeError(provider, error)}");
         }
         finally
         {
-            if (usageRequest == current) usageRequest = null;
-            current.Dispose();
+            if (usageRequests.GetValueOrDefault(ring).Cancellation == current) usageRequests.Remove(ring);
         }
     }
 
-    private void DisplayUsage(decimal? used, string tooltip)
+    private static void DisplayUsage(ContentControl ring, decimal? used, decimal quota, string tooltip)
     {
-        UsageRing.ToolTip = tooltip;
-        AutomationProperties.SetName(UsageRing, tooltip);
-        var fraction = (double)Math.Clamp((used ?? 0) / Volcengine.FreeCharacters, 0, 1);
-        if (fraction == 0) { UsageArc.Data = Geometry.Empty; return; }
-        if (fraction >= 1) { UsageArc.Data = new EllipseGeometry(new Point(8, 8), 6.5, 6.5); return; }
+        ring.ToolTip = tooltip;
+        AutomationProperties.SetName(ring, tooltip);
+        var fraction = (double)Math.Clamp((used ?? 0) / quota, 0, 1);
+        if (fraction == 0) { ring.Content = Geometry.Empty; return; }
+        if (fraction >= 1) { ring.Content = new EllipseGeometry(new Point(8, 8), 6.5, 6.5); return; }
         var angle = fraction * Math.Tau;
         var end = new Point(8 + 6.5 * Math.Sin(angle), 8 - 6.5 * Math.Cos(angle));
         var path = new PathFigure { StartPoint = new(8, 1.5), IsFilled = false };
         path.Segments.Add(new ArcSegment(end, new Size(6.5, 6.5), 0, fraction > 0.5, SweepDirection.Clockwise, true));
-        UsageArc.Data = new PathGeometry([path]);
+        ring.Content = new PathGeometry([path]);
     }
 
-    private void OnClosed(object? sender, EventArgs e) => usageRequest?.Cancel();
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        foreach (var request in usageRequests.Values.ToArray()) request.Cancellation.Cancel();
+    }
 
     private void OpenLink(object sender, RequestNavigateEventArgs e)
     {

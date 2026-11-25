@@ -11,6 +11,7 @@ internal static class OcrImage
     internal const int MaximumDimension = 2048;
     private const int MinimumDimension = 256;
     private const int MaximumFormBytes = 8_000_000;
+    private const int MaximumAliyunBytes = 10_000_000;
     private static readonly int[] JpegQualities = [90, 72, 55];
     private static readonly SearchValues<byte> EscapedBytes = SearchValues.Create("+/="u8);
 
@@ -20,7 +21,11 @@ internal static class OcrImage
         return (Math.Max(1, (int)Math.Round(width * scale)), Math.Max(1, (int)Math.Round(height * scale)));
     }
 
-    internal static byte[] Encode(BitmapSource image, CancellationToken token)
+    internal static byte[] Encode(BitmapSource image, CancellationToken token) => Encode(image, true, token);
+
+    internal static byte[] EncodeAliyun(BitmapSource image, CancellationToken token) => Encode(image, false, token);
+
+    private static byte[] Encode(BitmapSource image, bool form, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var frame = BitmapFrame.Create(Prepare(image));
@@ -32,9 +37,10 @@ internal static class OcrImage
             var encoder = new JpegBitmapEncoder { QualityLevel = quality };
             encoder.Frames.Add(frame);
             encoder.Save(jpeg);
-            if (Form(jpeg.GetBuffer().AsSpan(0, (int)jpeg.Length)) is { } payload) return payload;
+            if (!form && jpeg.Length <= MaximumAliyunBytes) return jpeg.ToArray();
+            if (form && Form(jpeg.GetBuffer().AsSpan(0, (int)jpeg.Length)) is { } payload) return payload;
         }
-        throw new InvalidOperationException("截图超过火山引擎 OCR 的大小限制，请缩小选区。");
+        throw new InvalidOperationException("截图超过 OCR 的大小限制，请缩小选区。");
     }
 
     private static BitmapSource Prepare(BitmapSource image)

@@ -11,12 +11,13 @@ public partial class App : Application
 {
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly UsageCache usage = new();
+    private readonly CancellationTokenSource usageTracking = new();
     private readonly SelectionReader selection = new();
     private readonly ScreenCapture capture = new();
     private readonly Dictionary<Command, Forms.ToolStripMenuItem> trayCommands = new();
     private Preferences preferences = null!;
     private GlobalShortcuts? shortcuts;
-    private Volcengine cloud = null!;
+    private CloudServices cloud = null!;
     private Forms.NotifyIcon? tray;
     private Forms.ContextMenuStrip? menu;
     private Drawing.Icon? trayIcon;
@@ -47,7 +48,7 @@ public partial class App : Application
 
         ApplyTheme();
         preferences = Preferences.Load();
-        cloud = new Volcengine(http);
+        cloud = new CloudServices(http);
         shortcuts = new GlobalShortcuts(preferences);
         shortcuts.Invoked += command =>
         {
@@ -55,7 +56,31 @@ public partial class App : Application
                 _ = RunAsync(command, Native.GetForegroundWindow());
         };
         BuildTray();
+        var trackingToken = usageTracking.Token;
+        _ = Task.Run(() => TrackVolcengineOcrUsageAsync(trackingToken), trackingToken);
         if (e.Args.Contains("--settings")) ShowSettings();
+    }
+
+    private async Task TrackVolcengineOcrUsageAsync(CancellationToken token)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromHours(1));
+        try
+        {
+            do
+            {
+                try
+                {
+                    if (Preferences.ReadCredentials(CloudProvider.Volcengine) is { } credentials)
+                        await cloud[CloudProvider.Volcengine].ReadOcrUsageAsync(credentials, DateTimeOffset.UtcNow, token)
+                            .ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    if (!token.IsCancellationRequested) System.Diagnostics.Debug.WriteLine(error.Message);
+                }
+            } while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
     }
 
     private void ApplyTheme()
@@ -81,17 +106,11 @@ public partial class App : Application
         using var stream = typeof(App).Assembly.GetManifestResourceStream("Luqri.Luqri.ico")!;
         using var icon = new Drawing.Icon(stream);
         trayIcon = (Drawing.Icon)icon.Clone();
-        using var smallIcon = new Drawing.Icon(icon, 16, 16);
-        menuIcons.Add("languages", smallIcon.ToBitmap());
         menu = new Forms.ContextMenuStrip();
+        menu.Opening += (_, _) => LoadTrayImages();
         foreach (var command in CommandInfo.All)
         {
-            if (!menuIcons.TryGetValue(command.Icon, out var image))
-            {
-                image = IconBitmap(command.Icon);
-                menuIcons.Add(command.Icon, image);
-            }
-            var item = new Forms.ToolStripMenuItem(command.Title) { Image = image };
+            var item = new Forms.ToolStripMenuItem(command.Title);
             item.Click += (_, _) =>
             {
                 if (trayForeground != 0) Native.SetForegroundWindow(trayForeground);
@@ -112,6 +131,26 @@ public partial class App : Application
         tray.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) ShowSettings(); };
     }
 
+    private void LoadTrayImages()
+    {
+        foreach (var command in CommandInfo.All)
+        {
+            var item = trayCommands[command.Id];
+            if (item.Image is not null) continue;
+            if (!menuIcons.TryGetValue(command.Icon, out var image))
+            {
+                if (command.Icon == "languages" && trayIcon is not null)
+                {
+                    using var smallIcon = new Drawing.Icon(trayIcon, 16, 16);
+                    image = smallIcon.ToBitmap();
+                }
+                else image = IconBitmap(command.Icon);
+                menuIcons.Add(command.Icon, image);
+            }
+            item.Image = image;
+        }
+    }
+
     private static Drawing.Bitmap IconBitmap(string glyph)
     {
         var visual = new System.Windows.Media.DrawingVisual();
@@ -123,13 +162,16 @@ public partial class App : Application
         }
         var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
         bitmap.Render(visual);
-        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
-        encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
-        using var stream = new MemoryStream();
-        encoder.Save(stream);
-        stream.Position = 0;
-        using var image = new Drawing.Bitmap(stream);
-        return new Drawing.Bitmap(image);
+        const Drawing.Imaging.PixelFormat format = Drawing.Imaging.PixelFormat.Format32bppPArgb;
+        var image = new Drawing.Bitmap(16, 16, format);
+        try
+        {
+            var bits = image.LockBits(new Drawing.Rectangle(0, 0, 16, 16), Drawing.Imaging.ImageLockMode.WriteOnly, format);
+            try { bitmap.CopyPixels(Int32Rect.Empty, bits.Scan0, bits.Stride * 16, bits.Stride); }
+            finally { image.UnlockBits(bits); }
+            return image;
+        }
+        catch { image.Dispose(); throw; }
     }
 
     private void RefreshTray()
@@ -172,6 +214,7 @@ public partial class App : Application
         feedback?.Close();
         var current = work = new CancellationTokenSource();
         var anchor = Forms.Cursor.Position;
+        var ocrProvider = preferences.OcrProvider;
         try
         {
             if (command == Command.Translate)
@@ -189,11 +232,11 @@ public partial class App : Application
             if (region is null) return;
             anchor = region.Anchor;
             var pixels = ScreenCapture.Capture(region);
-            if (command == Command.ScreenshotTranslate) await ShowTranslationAsync(anchor, image: pixels);
+            if (command == Command.ScreenshotTranslate) await ShowTranslationAsync(anchor, image: pixels, ocrProvider: ocrProvider);
             else
             {
-                var credentials = Preferences.RequireCredentials();
-                var text = await cloud.RecognizeAsync(pixels, credentials, current.Token);
+                var credentials = Preferences.RequireCredentials(ocrProvider);
+                var text = await cloud[ocrProvider].RecognizeAsync(pixels, credentials, current.Token);
                 current.Token.ThrowIfCancellationRequested();
                 Clipboard.SetText(text);
             }
@@ -204,7 +247,7 @@ public partial class App : Application
             if (!current.IsCancellationRequested)
             {
                 if (command == Command.Translate) await ShowTranslationAsync(anchor);
-                else ShowOcrError(Volcengine.DescribeError(error), anchor);
+                else ShowOcrError(CloudServices.DescribeError(ocrProvider, error), anchor);
             }
         }
         finally
@@ -215,19 +258,24 @@ public partial class App : Application
     }
 
     private Task ShowTranslationAsync(Drawing.Point anchor, string? text = null,
-        System.Windows.Media.Imaging.BitmapSource? image = null)
+        System.Windows.Media.Imaging.BitmapSource? image = null, CloudProvider ocrProvider = CloudProvider.Volcengine)
     {
         translation?.Close();
         var window = new TranslationWindow(preferences, cloud, ShowSettings);
         translation = window;
         window.Closed += (_, _) => translation = null;
-        window.SizeChanged += (_, _) => window.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        DispatcherOperation? positionUpdate = null;
+        window.SizeChanged += (_, _) =>
         {
-            if (window.IsVisible) Native.KeepOnScreen(window);
-        });
+            if (positionUpdate is { Status: DispatcherOperationStatus.Pending }) return;
+            positionUpdate = window.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+            {
+                if (window.IsVisible) Native.KeepOnScreen(window);
+            });
+        };
         Native.ShowPositioned(window, anchor, aboveCenter: true);
         window.Activate();
-        return window.LoadAsync(text, image);
+        return window.LoadAsync(text, image, ocrProvider);
     }
 
     private void ShowOcrError(string text, Drawing.Point anchor)
@@ -260,6 +308,8 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         work?.Cancel();
+        usageTracking.Cancel();
+        usageTracking.Dispose();
         capture.Cancel();
         settingsListener?.Unregister(null);
         requestSettings?.Dispose();

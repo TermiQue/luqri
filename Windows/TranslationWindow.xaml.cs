@@ -10,19 +10,19 @@ namespace Luqri;
 public partial class TranslationWindow : Window
 {
     private readonly Preferences preferences;
-    private readonly Volcengine cloud;
+    private readonly CloudServices cloud;
     private readonly Action openSettings;
+    private readonly Dictionary<CloudProvider, TranslationResultCard> results = new();
     private CancellationTokenSource? work;
     private SpeechSynthesizer? speech;
-    private bool speakingResult;
+    private TranslationResultCard? speakingResult;
     private bool pinned;
-    private bool expanded = true;
     private bool loadingInput;
     private bool initialized;
     private TranslationLanguage? resultLanguage;
     private string? inputError;
 
-    internal TranslationWindow(Preferences preferences, Volcengine cloud, Action openSettings)
+    internal TranslationWindow(Preferences preferences, CloudServices cloud, Action openSettings)
     {
         this.preferences = preferences;
         this.cloud = cloud;
@@ -41,7 +41,7 @@ public partial class TranslationWindow : Window
         UpdateControls();
     }
 
-    internal async Task LoadAsync(string? text, BitmapSource? image)
+    internal async Task LoadAsync(string? text, BitmapSource? image, CloudProvider ocrProvider)
     {
         if (image is not null)
         {
@@ -50,12 +50,12 @@ public partial class TranslationWindow : Window
             loadingInput = true;
             inputError = null;
             UpdateControls();
-            try { text = await cloud.RecognizeAsync(image, Preferences.RequireCredentials(), current.Token); }
+            try { text = await cloud[ocrProvider].RecognizeAsync(image, Preferences.RequireCredentials(ocrProvider), current.Token); }
             catch (OperationCanceledException) when (current.IsCancellationRequested) { return; }
             catch (Exception error)
             {
                 if (current.IsCancellationRequested) return;
-                inputError = Volcengine.DescribeError(error);
+                inputError = CloudServices.DescribeError(ocrProvider, error);
             }
             finally
             {
@@ -78,28 +78,22 @@ public partial class TranslationWindow : Window
     private async Task TranslateAsync()
     {
         var input = Editor.Text.Trim();
-        if (input.Length == 0 || !preferences.TranslationEnabled || loadingInput || work is not null) return;
+        if (input.Length == 0 || loadingInput || work is not null) return;
+        var providers = CloudServices.Providers.Where(preferences.UsesTranslation).ToArray();
+        if (providers.Length == 0) return;
 
-        expanded = true;
         ClearResult();
         StopSpeech();
         SetNotice(null);
         var current = work = new CancellationTokenSource();
         var source = TranslationLanguage.Find(preferences.Source);
         var target = TranslationLanguage.Find(preferences.Target) ?? TranslationLanguage.TargetFor(input, source);
-        ResultStatus.Text = "正在翻译…";
+        resultLanguage = target;
+        foreach (var provider in providers) GetResultCard(provider).BeginTranslation();
         UpdateControls();
         try
         {
-            var translated = await cloud.TranslateAsync(input, source, target, Preferences.RequireCredentials(), current.Token);
-            if (current.IsCancellationRequested) return;
-            Result.Text = translated;
-            resultLanguage = target;
-        }
-        catch (OperationCanceledException) when (current.IsCancellationRequested) { }
-        catch (Exception error)
-        {
-            if (!current.IsCancellationRequested) ResultStatus.Text = Volcengine.DescribeError(error);
+            await Task.WhenAll(providers.Select(TranslateProviderAsync));
         }
         finally
         {
@@ -109,6 +103,22 @@ public partial class TranslationWindow : Window
                 UpdateControls();
             }
             current.Dispose();
+        }
+
+        async Task TranslateProviderAsync(CloudProvider provider)
+        {
+            var card = results[provider];
+            try
+            {
+                var translated = await cloud[provider].TranslateAsync(input, source, target, Preferences.RequireCredentials(provider), current.Token);
+                if (!current.IsCancellationRequested) card.Result.Text = translated;
+            }
+            catch (OperationCanceledException) when (current.IsCancellationRequested) { }
+            catch (Exception error)
+            {
+                if (!current.IsCancellationRequested) card.ResultStatus.Text = CloudServices.DescribeError(provider, error);
+            }
+            if (!current.IsCancellationRequested) card.UpdateLayoutState(hasText: true);
         }
     }
 
@@ -122,10 +132,8 @@ public partial class TranslationWindow : Window
 
     private void ClearResult()
     {
-        Result.Text = "";
         resultLanguage = null;
-        ResultCopyIcon.Glyph = "copy";
-        ResultStatus.Text = "按 Ctrl+Enter 翻译";
+        foreach (var card in results.Values) card.Reset();
     }
 
     private void OnEdited(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -134,7 +142,7 @@ public partial class TranslationWindow : Window
         CancelWork();
         inputError = null;
         StopSpeech();
-        ClearResult();
+        if (resultLanguage is not null) ClearResult();
         SourceCopyIcon.Glyph = "copy";
         SetNotice(null);
         UpdateControls();
@@ -142,21 +150,39 @@ public partial class TranslationWindow : Window
 
     private void UpdateControls()
     {
-        var hasText = !string.IsNullOrWhiteSpace(Editor.Text);
-        var hasResult = !string.IsNullOrEmpty(Result.Text);
+        var text = Editor.Text;
+        var hasText = !string.IsNullOrWhiteSpace(text);
+        var hasProvider = CloudServices.Providers.Any(preferences.UsesTranslation);
         Editor.IsReadOnly = loadingInput;
-        Placeholder.Visibility = Editor.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        Placeholder.Visibility = text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         Placeholder.Text = loadingInput ? "正在识别文字…" : inputError ?? "输入或粘贴文字…";
         SourceSpeak.IsEnabled = SourceCopy.IsEnabled = hasText;
-        TranslateButton.IsEnabled = hasText && !loadingInput && work is null && preferences.TranslationEnabled;
+        TranslateButton.IsEnabled = hasText && !loadingInput && work is null && hasProvider;
         PasteButton.IsEnabled = !loadingInput;
-        DisabledCard.Visibility = preferences.TranslationEnabled ? Visibility.Collapsed : Visibility.Visible;
-        ServiceCard.Visibility = preferences.TranslationEnabled ? Visibility.Visible : Visibility.Collapsed;
-        ServiceHeader.IsEnabled = hasText;
-        ResultPanel.Visibility = expanded && hasText ? Visibility.Visible : Visibility.Collapsed;
-        Chevron.Glyph = ResultPanel.Visibility == Visibility.Visible ? "chevron-down" : "chevron-right";
-        ResultStatus.Visibility = hasResult ? Visibility.Collapsed : Visibility.Visible;
-        Result.Visibility = ResultActions.Visibility = hasResult ? Visibility.Visible : Visibility.Collapsed;
+        DisabledCard.Visibility = hasProvider ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var provider in CloudServices.Providers)
+        {
+            if (preferences.UsesTranslation(provider))
+            {
+                var card = GetResultCard(provider);
+                card.Visibility = Visibility.Visible;
+                card.UpdateLayoutState(hasText);
+            }
+            else if (results.TryGetValue(provider, out var card)) card.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private TranslationResultCard GetResultCard(CloudProvider provider)
+    {
+        if (results.TryGetValue(provider, out var existing)) return existing;
+        var card = new TranslationResultCard(provider);
+        card.Collapsed += result => { if (speakingResult == result) StopSpeech(); };
+        card.CopyRequested += result => Copy(result.Result.Text, result.ResultCopyIcon);
+        card.SpeakRequested += result => Speak(result.Result.Text, resultLanguage, result);
+        results.Add(provider, card);
+        var index = provider == CloudProvider.Volcengine ? 0 : ServiceCards.Children.Count;
+        ServiceCards.Children.Insert(index, card);
+        return card;
     }
 
     private void OnKeyDown(object sender, KeyEventArgs e)
@@ -197,13 +223,6 @@ public partial class TranslationWindow : Window
         PinButton.ToolTip = label;
         System.Windows.Automation.AutomationProperties.SetName(PinButton, label);
         PinIcon.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, pinned ? "Accent" : "Ink");
-    }
-
-    private void ToggleResult(object sender, RoutedEventArgs e)
-    {
-        expanded = !expanded;
-        if (!expanded && speakingResult) StopSpeech();
-        UpdateControls();
     }
 
     private void OnDeactivated(object? sender, EventArgs e)
@@ -250,7 +269,6 @@ public partial class TranslationWindow : Window
     }
 
     private void CopySource(object sender, RoutedEventArgs e) => Copy(Editor.Text, SourceCopyIcon);
-    private void CopyResult(object sender, RoutedEventArgs e) => Copy(Result.Text, ResultCopyIcon);
 
     private void Copy(string text, Icon icon)
     {
@@ -263,10 +281,9 @@ public partial class TranslationWindow : Window
         catch (ExternalException) { SetNotice("无法写入剪贴板，请重试。"); }
     }
 
-    private void SpeakSource(object sender, RoutedEventArgs e) => Speak(Editor.Text, TranslationLanguage.Find(preferences.Source), false);
-    private void SpeakResult(object sender, RoutedEventArgs e) => Speak(Result.Text, resultLanguage, true);
+    private void SpeakSource(object sender, RoutedEventArgs e) => Speak(Editor.Text, TranslationLanguage.Find(preferences.Source), null);
 
-    private void Speak(string text, TranslationLanguage? language, bool result)
+    private void Speak(string text, TranslationLanguage? language, TranslationResultCard? result)
     {
         var toggleOff = speech is not null && speakingResult == result;
         StopSpeech();
@@ -293,7 +310,7 @@ public partial class TranslationWindow : Window
                 if (speech == engine) StopSpeech();
             });
             speakingResult = result;
-            (result ? ResultSpeaker : SourceSpeaker).Glyph = "square";
+            (result?.ResultSpeaker ?? SourceSpeaker).Glyph = "square";
             engine.SpeakAsync(text);
         }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException or COMException or NotSupportedException)
@@ -309,7 +326,8 @@ public partial class TranslationWindow : Window
         speech = null;
         if (engine is null) return;
         engine.Dispose();
-        ResultSpeaker.Glyph = SourceSpeaker.Glyph = "volume-2";
+        (speakingResult?.ResultSpeaker ?? SourceSpeaker).Glyph = "volume-2";
+        speakingResult = null;
     }
 
     private void SetNotice(string? text)

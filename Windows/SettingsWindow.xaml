@@ -29,6 +29,27 @@
                 <Setter Property="Height" Value="1"/>
                 <Setter Property="Opacity" Value="0.55"/>
             </Style>
+            <Style x:Key="UsageRingStyle" TargetType="ContentControl">
+                <Setter Property="Width" Value="21"/>
+                <Setter Property="Height" Value="22"/>
+                <Setter Property="Margin" Value="0,0,8,0"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="Focusable" Value="True"/>
+                <Setter Property="ToolTipService.InitialShowDelay" Value="0"/>
+                <Setter Property="ToolTipService.ShowDuration" Value="12000"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ContentControl">
+                            <Grid Background="Transparent">
+                                <Ellipse Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Line}"/>
+                                <Path Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Accent}"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" Stretch="None"
+                                      Data="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
             <Style TargetType="Label">
                 <Setter Property="Padding" Value="0"/>
                 <Setter Property="VerticalAlignment" Value="Center"/>
@@ -104,19 +125,29 @@
                     </DockPanel>
                     <Border Style="{StaticResource Divider}"/>
                     <DockPanel Style="{StaticResource Row}">
-                        <CheckBox x:Name="EnableCloud" DockPanel.Dock="Right" Style="{StaticResource RoundedCheckBox}"
-                                  AutomationProperties.Name="启用火山引擎翻译" Checked="CloudChanged" Unchecked="CloudChanged"/>
-                        <Grid x:Name="UsageRing" DockPanel.Dock="Right" Width="21" Height="22" Margin="0,0,8,0"
-                              VerticalAlignment="Center" Background="Transparent" Focusable="True"
-                              ToolTipService.InitialShowDelay="0" ToolTipService.ShowDuration="12000">
-                            <Ellipse Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Line}"/>
-                            <Path x:Name="UsageArc" Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Accent}"
-                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Stretch="None"/>
+                        <Grid DockPanel.Dock="Right" Width="100">
+                            <CheckBox x:Name="EnableVolcengine" Style="{StaticResource RoundedCheckBox}" HorizontalAlignment="Right"
+                                      AutomationProperties.Name="启用火山引擎翻译" Checked="TranslationChanged" Unchecked="TranslationChanged"/>
                         </Grid>
+                        <ContentControl x:Name="VolcengineUsageRing" DockPanel.Dock="Right" Style="{StaticResource UsageRingStyle}"/>
                         <TextBlock>
                             <Run Text="火山引擎"/><Run Text="   "/>
-                            <Hyperlink x:Name="TranslationBilling" Foreground="{DynamicResource Accent}"
+                            <Hyperlink Foreground="{DynamicResource Accent}"
                                        NavigateUri="https://docs.volcengine.com/docs/machine-translation/product-billing"
+                                       RequestNavigate="OpenLink"><Run Text="开通与计费" FontSize="11"/></Hyperlink>
+                        </TextBlock>
+                    </DockPanel>
+                    <Border Style="{StaticResource Divider}"/>
+                    <DockPanel Style="{StaticResource Row}">
+                        <Grid DockPanel.Dock="Right" Width="100">
+                            <CheckBox x:Name="EnableAliyun" Style="{StaticResource RoundedCheckBox}" HorizontalAlignment="Right"
+                                      AutomationProperties.Name="启用阿里云翻译" Checked="TranslationChanged" Unchecked="TranslationChanged"/>
+                        </Grid>
+                        <ContentControl x:Name="AliyunUsageRing" DockPanel.Dock="Right" Style="{StaticResource UsageRingStyle}"/>
+                        <TextBlock>
+                            <Run Text="阿里云"/><Run Text="   "/>
+                            <Hyperlink Foreground="{DynamicResource Accent}"
+                                       NavigateUri="https://help.aliyun.com/zh/machine-translation/product-overview/pricing-of-machine-translation-general-purpose-edition"
                                        RequestNavigate="OpenLink"><Run Text="开通与计费" FontSize="11"/></Hyperlink>
                         </TextBlock>
                     </DockPanel>
@@ -126,23 +157,33 @@
             <TextBlock Text="OCR 服务" Style="{StaticResource Section}"/>
             <Border Style="{StaticResource Group}">
                 <DockPanel Style="{StaticResource Row}">
-                    <TextBlock DockPanel.Dock="Right" Text="火山引擎多语种 OCR"/>
+                    <ComboBox x:Name="OcrProvider" DockPanel.Dock="Right" Width="100" SelectionChanged="OcrProviderChanged"
+                              AutomationProperties.Name="OCR 服务商"/>
+                    <ContentControl x:Name="OcrUsageRing" DockPanel.Dock="Right" Style="{StaticResource UsageRingStyle}"/>
                     <TextBlock>
                         <Run Text="识别服务"/><Run Text="   "/>
-                        <Hyperlink Foreground="{DynamicResource Accent}"
+                        <Hyperlink x:Name="OcrBilling" Foreground="{DynamicResource Accent}"
                                    NavigateUri="https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1"
                                    RequestNavigate="OpenLink"><Run Text="开通与计费" FontSize="11"/></Hyperlink>
                     </TextBlock>
                 </DockPanel>
             </Border>
 
-            <TextBlock Text="火山引擎" Style="{StaticResource Section}"/>
+            <TextBlock Text="访问密钥" Style="{StaticResource Section}"/>
             <Border Style="{StaticResource Group}">
                 <StackPanel>
+                    <DockPanel Style="{StaticResource Row}">
+                        <ComboBox x:Name="CredentialProvider" DockPanel.Dock="Right" SelectionChanged="CredentialProviderChanged"
+                                  AutomationProperties.Name="访问密钥服务商"/>
+                        <Label Content="服务商" Target="{Binding ElementName=CredentialProvider}"/>
+                    </DockPanel>
+                    <Border Style="{StaticResource Divider}"/>
                     <Label Content="Access Key ID" Target="{Binding ElementName=AccessKey}" Margin="0,9,0,6"/>
                     <DockPanel Margin="0,0,0,10">
                         <Button Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="PasteAccess"
                                 ToolTip="粘贴 Access Key ID" AutomationProperties.Name="粘贴 Access Key ID"><local:Icon Glyph="clipboard-paste"/></Button>
+                        <Button x:Name="CopyAccessKey" Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="CopyAccess"
+                                ToolTip="复制 Access Key ID" AutomationProperties.Name="复制 Access Key ID"><local:Icon Glyph="copy"/></Button>
                         <PasswordBox x:Name="AccessKey" Style="{StaticResource RoundedPasswordBox}"
                                      PasswordChanged="CredentialChanged" AutomationProperties.Name="Access Key ID"/>
                     </DockPanel>
@@ -151,6 +192,8 @@
                     <DockPanel Margin="0,0,0,10">
                         <Button Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="PasteSecret"
                                 ToolTip="粘贴 Secret Access Key" AutomationProperties.Name="粘贴 Secret Access Key"><local:Icon Glyph="clipboard-paste"/></Button>
+                        <Button x:Name="CopySecretKey" Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="CopySecret"
+                                ToolTip="复制 Secret Access Key" AutomationProperties.Name="复制 Secret Access Key"><local:Icon Glyph="copy"/></Button>
                         <PasswordBox x:Name="SecretKey" Style="{StaticResource RoundedPasswordBox}"
                                      PasswordChanged="CredentialChanged" AutomationProperties.Name="Secret Access Key"/>
                     </DockPanel>

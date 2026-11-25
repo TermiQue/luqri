@@ -7,23 +7,39 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using static Luqri.CloudJson;
 
 namespace Luqri;
 
-internal sealed class Volcengine(HttpClient client)
+internal sealed class Volcengine : ICloudService
 {
-    private sealed record Operation(string Host, string Query, string Service, string ContentType = "application/json");
-    private static readonly Operation Translation = new("translate.volcengineapi.com", "Action=TranslateText&Version=2020-06-01", "translate");
-    private static readonly Operation Ocr = new("visual.volcengineapi.com", "Action=MultiLanguageOCR&Version=2022-08-31", "cv", "application/x-www-form-urlencoded");
-    private static readonly Operation Billing = new("open.volcengineapi.com", "Action=ListBillDetail&Version=2022-01-01", "billing");
+    private sealed record Operation(string Host, string Action, string Version, string Service,
+        string ContentType = "application/json")
+    {
+        public string Query { get; } = $"Action={Action}&Version={Version}";
+    }
+
+    private static readonly Operation Translation = new("translate.volcengineapi.com", "TranslateText", "2020-06-01", "translate");
+    private static readonly Operation Ocr = new("visual.volcengineapi.com", "MultiLanguageOCR", "2022-08-31", "cv", "application/x-www-form-urlencoded");
+    private static readonly Operation OcrAudit = new("open.volcengineapi.com", "LookupEvents", "2021-09-01", "cloud_trail");
+    private static readonly Operation Billing = new("open.volcengineapi.com", "ListBillDetail", "2022-01-01", "billing");
     private static readonly JsonSerializerOptions Json = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     public const decimal FreeCharacters = 2_000_000;
+    private readonly HttpClient client;
+    private readonly MonthlyQuota translationQuota = new("volcengine-translate", "火山引擎机器翻译", FreeCharacters, "字符");
+    private readonly VolcengineOcrUsage ocrUsage;
+
+    public Volcengine(HttpClient client)
+    {
+        this.client = client;
+        ocrUsage = new(QueryOcrUsageAsync);
+    }
 
     public async Task<string> TranslateAsync(string text, TranslationLanguage? source, TranslationLanguage target, Credentials credentials, CancellationToken token)
     {
         var result = new StringBuilder();
         var sourceCode = source?.CloudCode;
-        foreach (var chunk in Chunks(text))
+        foreach (var chunk in CloudServices.TextChunks(text, 5000))
         {
             token.ThrowIfCancellationRequested();
             var content = chunk.Trim();
@@ -37,7 +53,8 @@ internal sealed class Volcengine(HttpClient client)
             {
                 SourceLanguage = sourceCode, TargetLanguage = target.CloudCode, TextList = new[] { content }
             }, Json);
-            using var response = await SendAsync(Translation, payload, credentials, token).ConfigureAwait(false);
+            using var response = await translationQuota.SendAsync(credentials, content.Length, QueryUsageAsync,
+                () => SendAsync(Translation, payload, credentials, token), token).ConfigureAwait(false);
             var list = Field(response.RootElement, "TranslationList");
             if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() == 0 ||
                 String(list[0], "Translation") is not { Length: > 0 } translated)
@@ -52,30 +69,20 @@ internal sealed class Volcengine(HttpClient client)
         return result.ToString();
     }
 
-    internal static IEnumerable<string> Chunks(string text)
-    {
-        const int limit = 5000;
-        var start = 0;
-        while (text.Length - start > limit)
-        {
-            var end = start + limit;
-            if (char.IsLowSurrogate(text[end])) end--;
-            for (var index = end - 1; index >= start + limit / 2; index--)
-            {
-                if (!"\n\r 。！？".Contains(text[index])) continue;
-                end = index + 1;
-                break;
-            }
-            yield return text[start..end];
-            start = end;
-        }
-        yield return text[start..];
-    }
-
     public async Task<string> RecognizeAsync(BitmapSource image, Credentials credentials, CancellationToken token)
     {
+        var text = await ocrUsage.SendAsync(credentials, () => RecognizeImageAsync(image, credentials, token), token)
+            .ConfigureAwait(false);
+        return text.Length > 0 ? text : throw new InvalidOperationException("选区中没有识别到文字。");
+    }
+
+    private async Task<(string? RequestId, string Text)> RecognizeImageAsync(BitmapSource image, Credentials credentials,
+        CancellationToken token)
+    {
         var payload = await Task.Run(() => OcrImage.Encode(image, token), token).ConfigureAwait(false);
-        using var response = await SendAsync(Ocr, payload, credentials, token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        // Keep the response after dispatch even if the caller moves on, so the accepted request can be counted.
+        using var response = await SendAsync(Ocr, payload, credentials, CancellationToken.None).ConfigureAwait(false);
         var root = response.RootElement;
         var codes = new[] { Field(root, "code"), Field(root, "status") }
             .Where(value => value.ValueKind == JsonValueKind.Number).Select(value => value.GetInt32()).ToArray();
@@ -89,36 +96,83 @@ internal sealed class Volcengine(HttpClient client)
         var text = OcrLine.Paragraphs(lines.EnumerateArray()
             .Select(line => new OcrLine(String(line, "text")?.Trim() ?? "", Bounds(Field(line, "rect"))))
             .Where(line => line.Text.Length > 0));
-        return text.Length > 0 ? text : throw new InvalidOperationException("选区中没有识别到文字。");
+        return (String(root, "request_id"), text);
     }
 
     private static Rect Bounds(JsonElement value)
     {
         if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != 4) return Rect.Empty;
-        var left = double.PositiveInfinity;
-        var top = double.PositiveInfinity;
-        var right = double.NegativeInfinity;
-        var bottom = double.NegativeInfinity;
+        var bounds = Rect.Empty;
         foreach (var pair in value.EnumerateArray())
         {
             if (pair.ValueKind != JsonValueKind.Array || pair.GetArrayLength() != 2 ||
                 pair[0].ValueKind != JsonValueKind.Number || pair[1].ValueKind != JsonValueKind.Number ||
                 !pair[0].TryGetDouble(out var x) || !pair[1].TryGetDouble(out var y) ||
                 !double.IsFinite(x) || !double.IsFinite(y)) return Rect.Empty;
-            left = Math.Min(left, x);
-            top = Math.Min(top, y);
-            right = Math.Max(right, x);
-            bottom = Math.Max(bottom, y);
+            bounds.Union(new Point(x, y));
         }
-        return new Rect(new Point(left, top), new Point(right, bottom));
+        return bounds;
     }
 
-    public static string BillingPeriod(DateTimeOffset date) =>
-        date.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM", CultureInfo.InvariantCulture);
+    public Task<decimal> ReadTranslationUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
+        translationQuota.ReadAsync(credentials, now, QueryUsageAsync, token);
 
-    public async Task<decimal> ReadUsageAsync(Credentials credentials, string month, CancellationToken token)
+    public Task<decimal> ReadOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
+        ocrUsage.ReadAsync(credentials, now, token);
+
+    private async Task<Dictionary<string, DateTimeOffset>> QueryOcrUsageAsync(Credentials credentials,
+        DateTimeOffset begin, DateTimeOffset end, CancellationToken token)
+    {
+        var calls = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        var startTime = begin.ToUnixTimeSeconds();
+        var endTime = end.ToUnixTimeSeconds();
+        if (startTime >= endTime) return calls;
+
+        string? cursor = null;
+        var cursors = new HashSet<string>(StringComparer.Ordinal);
+        while (true)
+        {
+            var body = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                StartTime = startTime, EndTime = endTime, MaxResults = 100, NextToken = cursor,
+                LookupConditions = new[]
+                {
+                    new { LookupConditionKey = "EventName", LookupConditionValue = Ocr.Action },
+                    new { LookupConditionKey = "EventSource", LookupConditionValue = Ocr.Service }
+                }
+            }, Json);
+            using var response = await SendAsync(OcrAudit, body, credentials, token).ConfigureAwait(false);
+            var result = Field(response.RootElement, "Result");
+            var trails = Field(result, "Trails");
+            cursor = String(result, "NextToken");
+            if (trails.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var record in trails.EnumerateArray())
+                {
+                    if (String(record, "EventName") != Ocr.Action || String(record, "EventSource") != Ocr.Service ||
+                        String(record, "ErrorCode") is { Length: > 0 }) continue;
+                    if (String(record, "RequestID") is not { Length: > 0 } id ||
+                        !DateTimeOffset.TryParse(String(record, "EventTime"), CultureInfo.InvariantCulture,
+                            DateTimeStyles.None, out var time))
+                        throw new JsonException("Missing OCR audit request ID or timestamp.");
+                    if (time.ToUnixTimeSeconds() >= startTime && time.ToUnixTimeSeconds() <= endTime)
+                        calls[id] = CloudServices.BillingTime(time);
+                }
+            }
+            else if (result.ValueKind != JsonValueKind.Object || trails.ValueKind != JsonValueKind.Null ||
+                !string.IsNullOrEmpty(cursor))
+                throw new JsonException("Missing OCR audit events.");
+
+            if (string.IsNullOrEmpty(cursor)) return calls;
+            if (!cursors.Add(cursor)) throw new JsonException("Repeated OCR audit page.");
+            await Task.Delay(250, token).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<decimal> QueryUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
     {
         const int pageSize = 100;
+        var month = CloudServices.BillingMonth(now);
         decimal total = 0;
         for (var offset = 0; ; offset += pageSize)
         {
@@ -165,14 +219,6 @@ internal sealed class Volcengine(HttpClient client)
 
     private static InvalidOperationException InvalidBillingResult() => new("火山引擎返回的账单明细无法计算用量。");
 
-    internal static string DescribeError(Exception error) => error switch
-    {
-        OperationCanceledException => "请求超时，请重试。",
-        HttpRequestException => "无法连接火山引擎，请检查网络后重试。",
-        JsonException => "火山引擎返回格式异常，请重试。",
-        _ => error.Message
-    };
-
     private async Task<JsonDocument> SendAsync(Operation operation, byte[] payload, Credentials credentials, CancellationToken token)
     {
         using var request = Sign(operation, payload, credentials, DateTimeOffset.UtcNow);
@@ -185,9 +231,11 @@ internal sealed class Volcengine(HttpClient client)
             catch (JsonException) when (!response.IsSuccessStatusCode) { }
             var error = result is null ? default : Field(Field(result.RootElement, "ResponseMetadata"), "Error");
             if (String(error, "Code") is { } code)
-                throw new InvalidOperationException($"火山引擎返回 {code} · {String(error, "Message")}");
+                throw new CloudRejectedException($"火山引擎返回 {code} · {String(error, "Message")}");
             if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException($"火山引擎请求失败（HTTP {(int)response.StatusCode}）。");
+                throw (int)response.StatusCode < 500
+                    ? new CloudRejectedException($"火山引擎请求失败（HTTP {(int)response.StatusCode}）。")
+                    : new InvalidOperationException($"火山引擎请求失败（HTTP {(int)response.StatusCode}）。");
             return result!;
         }
         catch
@@ -224,58 +272,4 @@ internal sealed class Volcengine(HttpClient client)
             $"HMAC-SHA256 Credential={credentials.AccessKey}/{scope}, SignedHeaders={signedHeaders}, Signature={signature}");
         return request;
     }
-
-    private static JsonElement Field(JsonElement value, string name) =>
-        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out var field) ? field : default;
-
-    private static string? String(JsonElement value, string name)
-    {
-        var field = Field(value, name);
-        return field.ValueKind == JsonValueKind.String ? field.GetString() : null;
-    }
-}
-
-internal sealed record OcrLine(string Text, Rect Bounds)
-{
-    public static string Paragraphs(IEnumerable<OcrLine> lines)
-    {
-        var result = new StringBuilder();
-        OcrLine? previous = null;
-        foreach (var line in lines)
-        {
-            if (previous is not null) result.Append(Separator(previous, line));
-            result.Append(line.Text);
-            previous = line;
-        }
-        return result.ToString();
-    }
-
-    private static string Separator(OcrLine previous, OcrLine next)
-    {
-        var first = previous.Bounds;
-        var second = next.Bounds;
-        if (first.IsEmpty || second.IsEmpty) return "\n";
-        var height = Math.Max(first.Height, second.Height);
-        if (height <= 0) return "\n";
-        var advance = second.Y + second.Height / 2 - first.Y - first.Height / 2;
-        if (advance < -height * 0.5 || second.Top - first.Bottom > height * 0.9) return "\n\n";
-        var continuesLine = advance > height * 0.55 && advance < height * 1.85 &&
-            first.Width >= height * 5 && first.Right >= second.Right - height * 0.6 &&
-            Math.Min(first.Height, second.Height) >= height * 0.75;
-        if (!continuesLine || Math.Abs(second.Left - first.Left) >= height * 0.45 ||
-            IsListItem(previous.Text) || IsListItem(next.Text) || ":：".Contains(previous.Text[^1])) return "\n";
-
-        Rune.DecodeLastFromUtf16(previous.Text, out var lastText, out _);
-        Rune.DecodeFromUtf16(next.Text, out var firstText, out _);
-        return (IsEastAsian(lastText.Value) && IsEastAsian(firstText.Value)) ||
-            "，。！？、；：）】》」』".Contains(next.Text[0]) ? "" : " ";
-    }
-
-    private static bool IsListItem(string text) => text.StartsWith('•') || text.StartsWith('・') ||
-        text.StartsWith("- ", StringComparison.Ordinal) ||
-        (char.IsNumber(text[0]) && text.Take(5).Any(ch => ".、)）".Contains(ch)));
-
-    private static bool IsEastAsian(int value) =>
-        value is >= 0x3000 and <= 0x30ff or >= 0x3400 and <= 0x9fff or
-            >= 0xf900 and <= 0xfaff or >= 0x20000 and <= 0x323af;
 }
