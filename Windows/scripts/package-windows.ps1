@@ -6,8 +6,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$project = Join-Path $root 'Windows\Luqri.Windows.csproj'
-$definition = Join-Path $root 'Windows\Luqri.iss'
+$project = Join-Path $root 'Luqri.Windows.csproj'
+$definition = Join-Path $root 'Luqri.iss'
 $iscc = (Get-Command -Name $Compiler -CommandType Application).Source
 $temp = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).ProviderPath.TrimEnd('\')
 $staging = Join-Path $temp ('Luqri-Package-' + [Guid]::NewGuid().ToString('N'))

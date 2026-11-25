@@ -18,7 +18,7 @@ Luqri 是基于 WPF 和 Win32 的 Windows 托盘工具，支持划词翻译、�
 
 ## 安装
 
-根据电脑的处理器架构运行 `Luqri-Setup-x64.exe` 或 `Luqri-Setup-arm64.exe`。安装包包含 .NET 桌面运行时，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Luqri`，并在开始菜单中创建 Luqri 快捷方式。也可以直接运行自包含目录中的 `Luqri.exe`。
+根据电脑的处理器架构运行 `Luqri-Setup-x64.exe` 或 `Luqri-Setup-arm64.exe`。安装包包含 .NET 桌面运行时，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Luqri`，并在开始菜单中创建 Luqri 快捷方式。也可以直接运行自包含目录中的 `Luqri.exe`。 [GitHub Releases](https://github.com/TermiQue/luqri/releases)
 
 启动后，在任务栏通知区域左键点击 Luqri 打开设置，右键可以运行命令或退出。升级或卸载前先从托盘退出 Luqri。可在 Windows「已安装的应用」中卸载，卸载会保留设置和火山引擎密钥。
 
@@ -40,14 +40,12 @@ Luqri 是基于 WPF 和 Win32 的 Windows 托盘工具，支持划词翻译、�
 
 ## 服务与数据
 
-- 翻译和截图识别均使用火山引擎。按需开通机器翻译和多语种 OCR 后，在 Luqri 设置中填写 Access Key ID 和 Secret Access Key。机器翻译默认开启。待翻译文字和框选截图会发送到对应的火山引擎接口。 [机器翻译开通与计费](https://docs.volcengine.com/docs/machine-translation/product-billing) · [多语种 OCR](https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1)
-- 在设置中选择「自动选择」作为译文语言时，中文原文译为英语，其余原文译为简体中文。
-- 设置中的用量环显示当月已入账的翻译字符数，查询需要账单明细权限。
+- 翻译和截图识别均使用火山引擎。机器翻译默认开启。申请服务、配置密钥和查询用量的步骤见 [火山引擎通用配置](../README.md#配置火山引擎)。
 - 密钥经 Windows DPAPI 加密后保存在 `%LOCALAPPDATA%\Luqri\volcengine.bin`，可在设置中点击「移除密钥」删除。
 
 ## 构建
 
-安装 .NET 10 SDK 后，在仓库根目录运行以下命令。 [.NET 10 下载](https://dotnet.microsoft.com/download/dotnet/10.0)
+安装 .NET 10 SDK 后，进入 `Windows/` 目录运行以下命令。 [.NET 10 下载](https://dotnet.microsoft.com/download/dotnet/10.0)
 
 ```powershell
 .\scripts\build-windows.ps1
@@ -57,10 +55,14 @@ Luqri 是基于 WPF 和 Win32 的 Windows 托盘工具，支持划词翻译、�
 
 ## 打包安装程序
 
-安装 Inno Setup 7.1 或更新版本后，在仓库根目录运行以下命令。如果 `ISCC.exe` 不在 PATH 中，可用 `-Compiler` 指定其完整路径。 [Inno Setup 下载](https://jrsoftware.org/inno-setup/downloads)
+安装 Inno Setup 7.1 或更新版本后，在 `Windows/` 目录运行以下命令。可用 `-Compiler` 指定 `ISCC.exe` 的完整路径。 [Inno Setup 下载](https://jrsoftware.org/inno-setup/downloads)
 
 ```powershell
 .\scripts\package-windows.ps1
 ```
 
 脚本生成 `.build\Luqri-win-x64\Luqri-Setup-x64.exe` 和 `.build\Luqri-win-arm64\Luqri-Setup-arm64.exe`。也可用 `-Runtime` 仅打包指定架构。
+
+## 图标
+
+界面使用 Lucide SVG 图标，随应用分发。 [Lucide](https://lucide.dev/) · [许可证](Lucide-LICENSE.txt)

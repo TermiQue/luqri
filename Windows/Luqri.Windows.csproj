@@ -14,8 +14,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Speech" Version="10.0.0" />
-    <Resource Include="..\Luqri\Icons\*.svg" Link="Icons\%(Filename)%(Extension)" />
+    <Resource Include="Icons\*.svg" />
     <EmbeddedResource Include="Luqri.ico" />
-    <None Include="..\Luqri\Lucide-LICENSE.txt" Link="Lucide-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Lucide-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

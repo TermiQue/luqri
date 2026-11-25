@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$project = Join-Path $root 'Windows\Luqri.Windows.csproj'
+$project = Join-Path $root 'Luqri.Windows.csproj'
 foreach ($rid in $Runtime) {
     $output = Join-Path $root ".build\Luqri-$rid"
     dotnet publish $project -c Release -r $rid --self-contained -o $output
