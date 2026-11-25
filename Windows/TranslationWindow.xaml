@@ -66,12 +66,12 @@
                     <StackPanel>
                         <Button x:Name="ServiceHeader" Style="{StaticResource FlatButton}" Background="Transparent"
                                 Height="34" HorizontalContentAlignment="Stretch" Padding="9,0"
-                                AutomationProperties.Name="火山引擎" Click="ToggleResult">
+                                Click="ToggleResult">
                             <DockPanel>
                                 <local:Icon x:Name="Chevron" DockPanel.Dock="Right" Width="13" Height="13"
                                             Stroke="{DynamicResource Muted}" Glyph="chevron-right"/>
-                                <local:Icon DockPanel.Dock="Left" Stroke="{DynamicResource Accent}" Glyph="flame" Margin="0,0,8,0"/>
-                                <TextBlock Text="火山引擎" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <local:Icon x:Name="ServiceIcon" DockPanel.Dock="Left" Stroke="{DynamicResource Accent}" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="ServiceName" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </DockPanel>
                         </Button>
                         <StackPanel x:Name="ResultPanel" Visibility="Collapsed" Margin="10,0,10,8">

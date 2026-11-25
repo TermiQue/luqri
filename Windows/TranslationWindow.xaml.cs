@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Speech.Synthesis;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -10,7 +11,7 @@ namespace Luqri;
 public partial class TranslationWindow : Window
 {
     private readonly Preferences preferences;
-    private readonly Volcengine cloud;
+    private readonly CloudServices cloud;
     private readonly Action openSettings;
     private CancellationTokenSource? work;
     private SpeechSynthesizer? speech;
@@ -22,7 +23,7 @@ public partial class TranslationWindow : Window
     private TranslationLanguage? resultLanguage;
     private string? inputError;
 
-    internal TranslationWindow(Preferences preferences, Volcengine cloud, Action openSettings)
+    internal TranslationWindow(Preferences preferences, CloudServices cloud, Action openSettings)
     {
         this.preferences = preferences;
         this.cloud = cloud;
@@ -30,6 +31,7 @@ public partial class TranslationWindow : Window
         InitializeComponent();
         initialized = true;
         Loaded += (_, _) => Editor.Focus();
+        UpdateProvider();
         UpdateControls();
     }
 
@@ -38,10 +40,19 @@ public partial class TranslationWindow : Window
         if (!loadingInput) CancelWork();
         ClearResult();
         StopSpeech();
+        UpdateProvider();
         UpdateControls();
     }
 
-    internal async Task LoadAsync(string? text, BitmapSource? image)
+    private void UpdateProvider()
+    {
+        var provider = preferences.TranslationProvider;
+        ServiceName.Text = CloudServices.Name(provider);
+        ServiceIcon.Glyph = provider == CloudProvider.Aliyun ? "languages" : "flame";
+        AutomationProperties.SetName(ServiceHeader, ServiceName.Text);
+    }
+
+    internal async Task LoadAsync(string? text, BitmapSource? image, CloudProvider ocrProvider)
     {
         if (image is not null)
         {
@@ -50,12 +61,12 @@ public partial class TranslationWindow : Window
             loadingInput = true;
             inputError = null;
             UpdateControls();
-            try { text = await cloud.RecognizeAsync(image, Preferences.RequireCredentials(), current.Token); }
+            try { text = await cloud[ocrProvider].RecognizeAsync(image, Preferences.RequireCredentials(ocrProvider), current.Token); }
             catch (OperationCanceledException) when (current.IsCancellationRequested) { return; }
             catch (Exception error)
             {
                 if (current.IsCancellationRequested) return;
-                inputError = Volcengine.DescribeError(error);
+                inputError = CloudServices.DescribeError(ocrProvider, error);
             }
             finally
             {
@@ -85,13 +96,14 @@ public partial class TranslationWindow : Window
         StopSpeech();
         SetNotice(null);
         var current = work = new CancellationTokenSource();
+        var provider = preferences.TranslationProvider;
         var source = TranslationLanguage.Find(preferences.Source);
         var target = TranslationLanguage.Find(preferences.Target) ?? TranslationLanguage.TargetFor(input, source);
         ResultStatus.Text = "正在翻译…";
         UpdateControls();
         try
         {
-            var translated = await cloud.TranslateAsync(input, source, target, Preferences.RequireCredentials(), current.Token);
+            var translated = await cloud[provider].TranslateAsync(input, source, target, Preferences.RequireCredentials(provider), current.Token);
             if (current.IsCancellationRequested) return;
             Result.Text = translated;
             resultLanguage = target;
@@ -99,7 +111,7 @@ public partial class TranslationWindow : Window
         catch (OperationCanceledException) when (current.IsCancellationRequested) { }
         catch (Exception error)
         {
-            if (!current.IsCancellationRequested) ResultStatus.Text = Volcengine.DescribeError(error);
+            if (!current.IsCancellationRequested) ResultStatus.Text = CloudServices.DescribeError(provider, error);
         }
         finally
         {

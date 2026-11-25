@@ -16,7 +16,7 @@ public partial class App : Application
     private readonly Dictionary<Command, Forms.ToolStripMenuItem> trayCommands = new();
     private Preferences preferences = null!;
     private GlobalShortcuts? shortcuts;
-    private Volcengine cloud = null!;
+    private CloudServices cloud = null!;
     private Forms.NotifyIcon? tray;
     private Forms.ContextMenuStrip? menu;
     private Drawing.Icon? trayIcon;
@@ -47,7 +47,7 @@ public partial class App : Application
 
         ApplyTheme();
         preferences = Preferences.Load();
-        cloud = new Volcengine(http);
+        cloud = new CloudServices(http);
         shortcuts = new GlobalShortcuts(preferences);
         shortcuts.Invoked += command =>
         {
@@ -172,6 +172,7 @@ public partial class App : Application
         feedback?.Close();
         var current = work = new CancellationTokenSource();
         var anchor = Forms.Cursor.Position;
+        var ocrProvider = preferences.OcrProvider;
         try
         {
             if (command == Command.Translate)
@@ -189,11 +190,11 @@ public partial class App : Application
             if (region is null) return;
             anchor = region.Anchor;
             var pixels = ScreenCapture.Capture(region);
-            if (command == Command.ScreenshotTranslate) await ShowTranslationAsync(anchor, image: pixels);
+            if (command == Command.ScreenshotTranslate) await ShowTranslationAsync(anchor, image: pixels, ocrProvider: ocrProvider);
             else
             {
-                var credentials = Preferences.RequireCredentials();
-                var text = await cloud.RecognizeAsync(pixels, credentials, current.Token);
+                var credentials = Preferences.RequireCredentials(ocrProvider);
+                var text = await cloud[ocrProvider].RecognizeAsync(pixels, credentials, current.Token);
                 current.Token.ThrowIfCancellationRequested();
                 Clipboard.SetText(text);
             }
@@ -204,7 +205,7 @@ public partial class App : Application
             if (!current.IsCancellationRequested)
             {
                 if (command == Command.Translate) await ShowTranslationAsync(anchor);
-                else ShowOcrError(Volcengine.DescribeError(error), anchor);
+                else ShowOcrError(CloudServices.DescribeError(ocrProvider, error), anchor);
             }
         }
         finally
@@ -215,7 +216,7 @@ public partial class App : Application
     }
 
     private Task ShowTranslationAsync(Drawing.Point anchor, string? text = null,
-        System.Windows.Media.Imaging.BitmapSource? image = null)
+        System.Windows.Media.Imaging.BitmapSource? image = null, CloudProvider ocrProvider = CloudProvider.Volcengine)
     {
         translation?.Close();
         var window = new TranslationWindow(preferences, cloud, ShowSettings);
@@ -227,7 +228,7 @@ public partial class App : Application
         });
         Native.ShowPositioned(window, anchor, aboveCenter: true);
         window.Activate();
-        return window.LoadAsync(text, image);
+        return window.LoadAsync(text, image, ocrProvider);
     }
 
     private void ShowOcrError(string text, Drawing.Point anchor)

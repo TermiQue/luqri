@@ -20,7 +20,7 @@ Luqri 是基于 WPF 和 Win32 的 Windows 托盘工具，支持划词翻译、�
 
 根据电脑的处理器架构运行 `Luqri-Setup-x64.exe` 或 `Luqri-Setup-arm64.exe`。安装包包含 .NET 桌面运行时，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Luqri`，并在开始菜单中创建 Luqri 快捷方式。也可以直接运行自包含目录中的 `Luqri.exe`。 [GitHub Releases](https://github.com/TermiQue/luqri/releases)
 
-启动后，在任务栏通知区域左键点击 Luqri 打开设置，右键可以运行命令或退出。升级或卸载前先从托盘退出 Luqri。可在 Windows「已安装的应用」中卸载，卸载会保留设置和火山引擎密钥。
+启动后，在任务栏通知区域左键点击 Luqri 打开设置，右键可以运行命令或退出。升级或卸载前先从托盘退出 Luqri。可在 Windows「已安装的应用」中卸载，卸载会保留设置和访问密钥。
 
 ## 使用
 
@@ -40,8 +40,13 @@ Luqri 是基于 WPF 和 Win32 的 Windows 托盘工具，支持划词翻译、�
 
 ## 服务与数据
 
-- 翻译和截图识别均使用火山引擎。机器翻译默认开启。申请服务、配置密钥和查询用量的步骤见 [火山引擎通用配置](../README.md#配置火山引擎)。
-- 密钥经 Windows DPAPI 加密后保存在 `%LOCALAPPDATA%\Luqri\volcengine.bin`，可在设置中点击「移除密钥」删除。
+- 翻译和截图识别默认使用火山引擎，可以在设置中分别切换到阿里云。火山引擎的服务开通、密钥配置和用量查询见 [火山引擎通用配置](../README.md#配置火山引擎)。
+- 在「访问密钥」中选中对应服务商后保存或移除密钥。密钥经 Windows DPAPI 加密，分别保存在 `%LOCALAPPDATA%\Luqri\volcengine.bin` 和 `%LOCALAPPDATA%\Luqri\aliyun.bin`。
+
+### 阿里云
+
+- 在阿里云开通「机器翻译通用版」和截图识别所需的「小语种识别」，再到 Luqri 的「访问密钥」选择「阿里云」，填写 AccessKey ID 和 AccessKey Secret。两项服务可以共用同一组密钥。 [机器翻译通用版](https://help.aliyun.com/zh/machine-translation/product-overview/pricing-of-machine-translation-general-purpose-edition) · [小语种识别](https://help.aliyun.com/zh/ocr/product-overview/recognition-of-characters-in-languages-except-for-chinese-and-english-1)
+- RAM 子账号需获准调用 `alimt:TranslateGeneral` 和所选 OCR 服务的 `ocr:RecognizeMultiLanguage`。翻译用量环另需 `alimt:GetTranslateReport`，它按自然月汇总阿里云日报，以 100 万字符为参照估算进度。实际免费余额可到阿里云机器翻译控制台的「服务开通与管理」查看。 [翻译用量报表](https://help.aliyun.com/zh/machine-translation/developer-reference/api-alimt-2018-10-12-gettranslatereport) · [OCR 接口](https://help.aliyun.com/zh/ocr/developer-reference/api-ocr-api-2021-07-07-recognizemultilanguage)
 
 ## 构建
 

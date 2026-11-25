@@ -10,7 +10,7 @@ using System.Windows.Media.Imaging;
 
 namespace Luqri;
 
-internal sealed class Volcengine(HttpClient client)
+internal sealed class Volcengine(HttpClient client) : ICloudService
 {
     private sealed record Operation(string Host, string Query, string Service, string ContentType = "application/json");
     private static readonly Operation Translation = new("translate.volcengineapi.com", "Action=TranslateText&Version=2020-06-01", "translate");
@@ -23,7 +23,7 @@ internal sealed class Volcengine(HttpClient client)
     {
         var result = new StringBuilder();
         var sourceCode = source?.CloudCode;
-        foreach (var chunk in Chunks(text))
+        foreach (var chunk in CloudServices.TextChunks(text, 5000))
         {
             token.ThrowIfCancellationRequested();
             var content = chunk.Trim();
@@ -50,26 +50,6 @@ internal sealed class Volcengine(HttpClient client)
             sourceCode ??= String(list[0], "DetectedSourceLanguage");
         }
         return result.ToString();
-    }
-
-    internal static IEnumerable<string> Chunks(string text)
-    {
-        const int limit = 5000;
-        var start = 0;
-        while (text.Length - start > limit)
-        {
-            var end = start + limit;
-            if (char.IsLowSurrogate(text[end])) end--;
-            for (var index = end - 1; index >= start + limit / 2; index--)
-            {
-                if (!"\n\r 。！？".Contains(text[index])) continue;
-                end = index + 1;
-                break;
-            }
-            yield return text[start..end];
-            start = end;
-        }
-        yield return text[start..];
     }
 
     public async Task<string> RecognizeAsync(BitmapSource image, Credentials credentials, CancellationToken token)
@@ -113,12 +93,10 @@ internal sealed class Volcengine(HttpClient client)
         return new Rect(new Point(left, top), new Point(right, bottom));
     }
 
-    public static string BillingPeriod(DateTimeOffset date) =>
-        date.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM", CultureInfo.InvariantCulture);
-
-    public async Task<decimal> ReadUsageAsync(Credentials credentials, string month, CancellationToken token)
+    public async Task<decimal> ReadUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
     {
         const int pageSize = 100;
+        var month = CloudServices.BillingTime(now).ToString("yyyy-MM", CultureInfo.InvariantCulture);
         decimal total = 0;
         for (var offset = 0; ; offset += pageSize)
         {
@@ -164,14 +142,6 @@ internal sealed class Volcengine(HttpClient client)
     }
 
     private static InvalidOperationException InvalidBillingResult() => new("火山引擎返回的账单明细无法计算用量。");
-
-    internal static string DescribeError(Exception error) => error switch
-    {
-        OperationCanceledException => "请求超时，请重试。",
-        HttpRequestException => "无法连接火山引擎，请检查网络后重试。",
-        JsonException => "火山引擎返回格式异常，请重试。",
-        _ => error.Message
-    };
 
     private async Task<JsonDocument> SendAsync(Operation operation, byte[] payload, Credentials credentials, CancellationToken token)
     {

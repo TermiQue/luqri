@@ -85,11 +85,22 @@ internal sealed class Preferences
     private static readonly string DirectoryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Luqri");
     private static string SettingsPath => Path.Combine(DirectoryPath, "settings.json");
-    private static string CredentialsPath => Path.Combine(DirectoryPath, "volcengine.bin");
+    private static string CredentialsPath(CloudProvider provider) =>
+        Path.Combine(DirectoryPath, provider == CloudProvider.Aliyun ? "aliyun.bin" : "volcengine.bin");
 
     public string? Source { get; set; }
     public string? Target { get; set; }
     public bool TranslationEnabled { get; set; } = true;
+    public CloudProvider TranslationProvider
+    {
+        get;
+        set => field = value == CloudProvider.Aliyun ? value : CloudProvider.Volcengine;
+    }
+    public CloudProvider OcrProvider
+    {
+        get;
+        set => field = value == CloudProvider.Aliyun ? value : CloudProvider.Volcengine;
+    }
     public Dictionary<Command, Shortcut> Bindings { get; init; } = new();
 
     public Shortcut Binding(CommandInfo command) => Bindings.TryGetValue(command.Id, out var shortcut) && shortcut.IsValid
@@ -103,28 +114,28 @@ internal sealed class Preferences
 
     public void Save() => WriteAtomically(SettingsPath, JsonSerializer.SerializeToUtf8Bytes(this));
 
-    public static Credentials RequireCredentials() => ReadCredentials() ??
-        throw new InvalidOperationException("请在设置中填写火山引擎访问密钥。");
+    public static Credentials RequireCredentials(CloudProvider provider) => ReadCredentials(provider) ??
+        throw new InvalidOperationException($"请在设置中填写{CloudServices.Name(provider)}访问密钥。");
 
-    public static Credentials? ReadCredentials()
+    public static Credentials? ReadCredentials(CloudProvider provider)
     {
         try
         {
-            var bytes = ProtectedData.Unprotect(File.ReadAllBytes(CredentialsPath), null, DataProtectionScope.CurrentUser);
+            var bytes = ProtectedData.Unprotect(File.ReadAllBytes(CredentialsPath(provider)), null, DataProtectionScope.CurrentUser);
             try { return JsonSerializer.Deserialize<Credentials>(bytes); }
             finally { CryptographicOperations.ZeroMemory(bytes); }
         }
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return null; }
     }
 
-    public static void SaveCredentials(Credentials credentials)
+    public static void SaveCredentials(CloudProvider provider, Credentials credentials)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(credentials);
-        try { WriteAtomically(CredentialsPath, ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser)); }
+        try { WriteAtomically(CredentialsPath(provider), ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser)); }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 
-    public static void RemoveCredentials() => File.Delete(CredentialsPath);
+    public static void RemoveCredentials(CloudProvider provider) => File.Delete(CredentialsPath(provider));
 
     private static void WriteAtomically(string path, byte[] data)
     {

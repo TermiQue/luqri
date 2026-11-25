@@ -105,7 +105,9 @@
                     <Border Style="{StaticResource Divider}"/>
                     <DockPanel Style="{StaticResource Row}">
                         <CheckBox x:Name="EnableCloud" DockPanel.Dock="Right" Style="{StaticResource RoundedCheckBox}"
-                                  AutomationProperties.Name="启用火山引擎翻译" Checked="CloudChanged" Unchecked="CloudChanged"/>
+                                  AutomationProperties.Name="启用机器翻译" Checked="CloudChanged" Unchecked="CloudChanged"/>
+                        <ComboBox x:Name="TranslationProvider" DockPanel.Dock="Right" SelectionChanged="TranslationProviderChanged"
+                                  Margin="0,0,8,0" AutomationProperties.Name="机器翻译服务商"/>
                         <Grid x:Name="UsageRing" DockPanel.Dock="Right" Width="21" Height="22" Margin="0,0,8,0"
                               VerticalAlignment="Center" Background="Transparent" Focusable="True"
                               ToolTipService.InitialShowDelay="0" ToolTipService.ShowDuration="12000">
@@ -114,7 +116,7 @@
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" Stretch="None"/>
                         </Grid>
                         <TextBlock>
-                            <Run Text="火山引擎"/><Run Text="   "/>
+                            <Run Text="机器翻译"/><Run Text="   "/>
                             <Hyperlink x:Name="TranslationBilling" Foreground="{DynamicResource Accent}"
                                        NavigateUri="https://docs.volcengine.com/docs/machine-translation/product-billing"
                                        RequestNavigate="OpenLink"><Run Text="开通与计费" FontSize="11"/></Hyperlink>
@@ -126,19 +128,26 @@
             <TextBlock Text="OCR 服务" Style="{StaticResource Section}"/>
             <Border Style="{StaticResource Group}">
                 <DockPanel Style="{StaticResource Row}">
-                    <TextBlock DockPanel.Dock="Right" Text="火山引擎多语种 OCR"/>
+                    <ComboBox x:Name="OcrProvider" DockPanel.Dock="Right" SelectionChanged="OcrProviderChanged"
+                              AutomationProperties.Name="OCR 服务商"/>
                     <TextBlock>
                         <Run Text="识别服务"/><Run Text="   "/>
-                        <Hyperlink Foreground="{DynamicResource Accent}"
+                        <Hyperlink x:Name="OcrBilling" Foreground="{DynamicResource Accent}"
                                    NavigateUri="https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1"
                                    RequestNavigate="OpenLink"><Run Text="开通与计费" FontSize="11"/></Hyperlink>
                     </TextBlock>
                 </DockPanel>
             </Border>
 
-            <TextBlock Text="火山引擎" Style="{StaticResource Section}"/>
+            <TextBlock Text="访问密钥" Style="{StaticResource Section}"/>
             <Border Style="{StaticResource Group}">
                 <StackPanel>
+                    <DockPanel Style="{StaticResource Row}">
+                        <ComboBox x:Name="CredentialProvider" DockPanel.Dock="Right" SelectionChanged="CredentialProviderChanged"
+                                  AutomationProperties.Name="访问密钥服务商"/>
+                        <Label Content="服务商" Target="{Binding ElementName=CredentialProvider}"/>
+                    </DockPanel>
+                    <Border Style="{StaticResource Divider}"/>
                     <Label Content="Access Key ID" Target="{Binding ElementName=AccessKey}" Margin="0,9,0,6"/>
                     <DockPanel Margin="0,0,0,10">
                         <Button Style="{StaticResource IconButton}" DockPanel.Dock="Right" Click="PasteAccess"
