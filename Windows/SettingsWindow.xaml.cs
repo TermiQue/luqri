@@ -86,7 +86,7 @@ public partial class SettingsWindow : Window
             ? "https://help.aliyun.com/zh/machine-translation/product-overview/pricing-of-machine-translation-general-purpose-edition"
             : "https://docs.volcengine.com/docs/machine-translation/product-billing");
         OcrBilling.NavigateUri = new(preferences.OcrProvider == CloudProvider.Aliyun
-            ? "https://help.aliyun.com/zh/ocr/product-overview/recognition-of-characters-in-languages-except-for-chinese-and-english-1"
+            ? "https://help.aliyun.com/zh/ocr/developer-reference/api-ocr-api-2021-07-07-recognizealltext"
             : "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1");
     }
 

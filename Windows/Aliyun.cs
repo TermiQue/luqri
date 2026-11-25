@@ -14,8 +14,8 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
 
     private static readonly Operation Translation = new("mt.aliyuncs.com", "TranslateGeneral", "2018-10-12");
     private static readonly Operation Report = Translation with { Action = "GetTranslateReport" };
-    private static readonly Operation Ocr = new("ocr-api.cn-hangzhou.aliyuncs.com", "RecognizeMultiLanguage", "2021-07-07");
-    private const string Languages = "chn,eng,ja,kor,lading,rus,tai,mys,idn,viet,ukr,tur,tamil";
+    private static readonly Operation Ocr = new("ocr-api.cn-hangzhou.aliyuncs.com", "RecognizeAllText", "2021-07-07");
+    private const string Languages = "chn,eng,ja,kor,lading,rus,tai,mys,idn,viet,ukr";
     private const string ReportDateFormat = "yyyy-MM-dd HH:mm:ss";
     public const decimal FreeCharacters = 1_000_000;
 
@@ -102,7 +102,12 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
     public async Task<string> RecognizeAsync(BitmapSource image, Credentials credentials, CancellationToken token)
     {
         var body = await Task.Run(() => OcrImage.EncodeAliyun(image, token), token).ConfigureAwait(false);
-        var parameters = new Dictionary<string, string> { ["Languages"] = Languages };
+        var parameters = new Dictionary<string, string>
+        {
+            ["Type"] = "MultiLang",
+            ["MultiLanConfig"] = JsonSerializer.Serialize(new { Languages }),
+            ["OutputCoordinate"] = "points"
+        };
         using var response = await SendAsync(Ocr, HttpMethod.Post, parameters, body,
             "application/octet-stream", credentials, token).ConfigureAwait(false);
         var root = response.RootElement;
@@ -110,13 +115,17 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
             throw ServiceError(root, code);
 
         using var data = ParseEmbeddedData(Field(root, "Data"));
-        var blocks = Field(data.RootElement, "prism_wordsInfo");
-        var text = blocks.ValueKind == JsonValueKind.Array
-            ? OcrLine.Paragraphs(blocks.EnumerateArray()
-                .Select(block => new OcrLine(String(block, "word")?.Trim() ?? "", Bounds(Field(block, "pos"))))
-                .Where(line => line.Text.Length > 0))
-            : "";
-        if (text.Length == 0) text = String(data.RootElement, "content")?.Trim() ?? "";
+        var images = Field(data.RootElement, "SubImages");
+        IEnumerable<OcrLine> lines = images.ValueKind == JsonValueKind.Array
+            ? images.EnumerateArray()
+                .Select(subImage => Field(Field(subImage, "BlockInfo"), "BlockDetails"))
+                .Where(blocks => blocks.ValueKind == JsonValueKind.Array)
+                .SelectMany(blocks => blocks.EnumerateArray())
+                .Select(block => new OcrLine(String(block, "BlockContent")?.Trim() ?? "", Bounds(Field(block, "BlockPoints"))))
+                .Where(line => line.Text.Length > 0)
+            : [];
+        var text = OcrLine.Paragraphs(lines);
+        if (text.Length == 0) text = String(data.RootElement, "Content")?.Trim() ?? "";
         return text.Length > 0 ? text : throw new InvalidOperationException("选区中没有识别到文字。");
     }
 
@@ -126,8 +135,8 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
         var bounds = Rect.Empty;
         foreach (var corner in value.EnumerateArray())
         {
-            var x = Field(corner, "x");
-            var y = Field(corner, "y");
+            var x = Field(corner, "X");
+            var y = Field(corner, "Y");
             if (x.ValueKind != JsonValueKind.Number || y.ValueKind != JsonValueKind.Number ||
                 !x.TryGetDouble(out var left) || !y.TryGetDouble(out var top) ||
                 !double.IsFinite(left) || !double.IsFinite(top)) return Rect.Empty;
@@ -210,7 +219,7 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
 
     private static InvalidOperationException ServiceError(JsonElement response, string code) =>
         string.Equals(code, "ocrServiceNotOpen", StringComparison.OrdinalIgnoreCase)
-            ? new("阿里云 OCR 尚未开通。请在文字识别控制台的「服务管理与开通」中开通「小语种识别」。")
+            ? new("阿里云 OCR 统一识别尚未开通。请在文字识别控制台的「服务管理与开通」中开通此服务。")
             : new($"阿里云返回 {code} · {String(response, "Message") ?? "请求失败。"}");
 
     private static JsonDocument ParseEmbeddedData(JsonElement value) => value.ValueKind switch
