@@ -209,7 +209,9 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
     }
 
     private static InvalidOperationException ServiceError(JsonElement response, string code) =>
-        new($"阿里云返回 {code} · {String(response, "Message") ?? "请求失败。"}");
+        string.Equals(code, "ocrServiceNotOpen", StringComparison.OrdinalIgnoreCase)
+            ? new("阿里云 OCR 尚未开通。请在文字识别控制台的「服务管理与开通」中开通「小语种识别」。")
+            : new($"阿里云返回 {code} · {String(response, "Message") ?? "请求失败。"}");
 
     private static JsonDocument ParseEmbeddedData(JsonElement value) => value.ValueKind switch
     {

@@ -393,10 +393,9 @@ public partial class SettingsWindow : Window
             var used = await cloud[provider].ReadUsageAsync(credentials, now, current.Token);
             if (current.IsCancellationRequested) return;
             usageCache.Entries[provider] = (credentials, month, used);
-            var amount = $"{used / 10000:N2} / {quota / 10000:N2} 万字符";
             var tooltip = provider == CloudProvider.Aliyun
-                ? $"云端报表估算 · {amount}\n实际免费余额以阿里云控制台为准。"
-                : amount;
+                ? $"云端报表估算 · {used:N0} / {quota:N0} 字符\n最近的翻译可能尚未计入。"
+                : $"{used / 10000:N2} / {quota / 10000:N2} 万字符";
             DisplayUsage(used, quota, tooltip);
         }
         catch (Exception error)

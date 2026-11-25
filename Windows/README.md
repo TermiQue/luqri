@@ -45,7 +45,7 @@ Luqri 是基于 WPF 和 Win32 的 Windows 托盘工具，支持划词翻译、�
 
 ### 阿里云
 
-- 在阿里云开通「机器翻译通用版」和截图识别所需的「小语种识别」，再到 Luqri 的「访问密钥」选择「阿里云」，填写 AccessKey ID 和 AccessKey Secret。两项服务可以共用同一组密钥。 [机器翻译通用版](https://help.aliyun.com/zh/machine-translation/product-overview/pricing-of-machine-translation-general-purpose-edition) · [小语种识别](https://help.aliyun.com/zh/ocr/product-overview/recognition-of-characters-in-languages-except-for-chinese-and-english-1)
+- 在阿里云开通「机器翻译通用版」。使用截图识别时，还需到文字识别控制台的「服务管理与开通」开通「小语种识别」。在 Luqri 的「访问密钥」选择「阿里云」，填写 AccessKey ID 和 AccessKey Secret，两项服务可以共用同一组密钥。 [机器翻译通用版](https://help.aliyun.com/zh/machine-translation/product-overview/pricing-of-machine-translation-general-purpose-edition) · [文字识别控制台](https://ocr.console.aliyun.com/overview)
 - RAM 子账号需获准调用 `alimt:TranslateGeneral` 和所选 OCR 服务的 `ocr:RecognizeMultiLanguage`。翻译用量环另需 `alimt:GetTranslateReport`，它按自然月汇总阿里云日报，以 100 万字符为参照估算进度。实际免费余额可到阿里云机器翻译控制台的「服务开通与管理」查看。 [翻译用量报表](https://help.aliyun.com/zh/machine-translation/developer-reference/api-alimt-2018-10-12-gettranslatereport) · [OCR 接口](https://help.aliyun.com/zh/ocr/developer-reference/api-ocr-api-2021-07-07-recognizemultilanguage)
 
 ## 构建
