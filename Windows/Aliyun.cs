@@ -15,9 +15,11 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
     private static readonly Operation Translation = new("mt.aliyuncs.com", "TranslateGeneral", "2018-10-12");
     private static readonly Operation Report = Translation with { Action = "GetTranslateReport" };
     private static readonly Operation Ocr = new("ocr-api.cn-hangzhou.aliyuncs.com", "RecognizeAllText", "2021-07-07");
+    private static readonly Operation OcrAudit = new("actiontrail.cn-hangzhou.aliyuncs.com", "LookupEvents", "2020-07-06");
     private const string Languages = "chn,eng,ja,kor,lading,rus,tai,mys,idn,viet,ukr";
     private const string ReportDateFormat = "yyyy-MM-dd HH:mm:ss";
     public const decimal FreeCharacters = 1_000_000;
+    public const decimal FreeOcrCalls = 200;
 
     public async Task<string> TranslateAsync(string text, TranslationLanguage? source, TranslationLanguage target,
         Credentials credentials, CancellationToken token)
@@ -99,6 +101,58 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
         return total;
     }
 
+    public async Task<decimal> ReadOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
+    {
+        var local = CloudServices.BillingTime(now);
+        var end = DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds());
+        var start = new DateTimeOffset(local.Year, local.Month, 1, 0, 0, 0, local.Offset);
+        var requests = new HashSet<string>(StringComparer.Ordinal);
+        for (var begin = start; begin < end;)
+        {
+            var until = end - begin > TimeSpan.FromDays(30) ? begin.AddDays(30) : end;
+            await CountOcrEventsAsync(begin, until, requests, credentials, token).ConfigureAwait(false);
+            if (until == end) break;
+            // Overlap the boundary so that neither end-point convention drops records there.
+            begin = until.AddSeconds(-1);
+            await Task.Delay(550, token).ConfigureAwait(false);
+        }
+        return requests.Count;
+    }
+
+    private async Task CountOcrEventsAsync(DateTimeOffset begin, DateTimeOffset end, HashSet<string> requests,
+        Credentials credentials, CancellationToken token)
+    {
+        const string utcFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
+        var parameters = new Dictionary<string, string>
+        {
+            ["StartTime"] = begin.UtcDateTime.ToString(utcFormat, CultureInfo.InvariantCulture),
+            ["EndTime"] = end.UtcDateTime.ToString(utcFormat, CultureInfo.InvariantCulture),
+            ["LookupAttribute.1.Key"] = "EventName", ["LookupAttribute.1.Value"] = Ocr.Action,
+            ["MaxResults"] = "50"
+        };
+        var cursors = new HashSet<string>(StringComparer.Ordinal);
+        while (true)
+        {
+            using var response = await SendAsync(OcrAudit, HttpMethod.Get, parameters, [], null, credentials, token).ConfigureAwait(false);
+            var events = Field(response.RootElement, "Events");
+            if (events.ValueKind != JsonValueKind.Array) throw new JsonException("Missing audit events.");
+            foreach (var record in events.EnumerateArray())
+            {
+                if (String(record, "eventName") != Ocr.Action || Scalar(record, "errorCode") is { Length: > 0 })
+                    continue;
+                var id = String(record, "requestId") ?? String(record, "eventId");
+                if (string.IsNullOrEmpty(id)) throw new JsonException("Missing audit event identifier.");
+                requests.Add(id);
+            }
+
+            var cursor = String(response.RootElement, "NextToken");
+            if (string.IsNullOrEmpty(cursor)) return;
+            if (!cursors.Add(cursor)) throw new JsonException("Repeated audit page.");
+            parameters["NextToken"] = cursor;
+            await Task.Delay(550, token).ConfigureAwait(false);
+        }
+    }
+
     public async Task<string> RecognizeAsync(BitmapSource image, Credentials credentials, CancellationToken token)
     {
         var body = await Task.Run(() => OcrImage.EncodeAliyun(image, token), token).ConfigureAwait(false);
@@ -157,7 +211,12 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
         try
         {
             using var details = JsonDocument.Parse(bytes);
-            if (Scalar(details.RootElement, "Code") is { Length: > 0 } code) throw ServiceError(details.RootElement, code);
+            if (Scalar(details.RootElement, "Code") is { Length: > 0 } code)
+            {
+                if (operation == OcrAudit && code is ("NoPermission" or "Forbidden" or "NotAuthorized"))
+                    throw new InvalidOperationException("请为当前 RAM 用户授予 actiontrail:LookupEvents 只读权限。");
+                throw ServiceError(details.RootElement, code);
+            }
         }
         catch (JsonException) { }
         throw new InvalidOperationException($"阿里云请求失败（HTTP {(int)response.StatusCode}）。");

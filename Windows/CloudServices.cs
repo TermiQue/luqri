@@ -21,6 +21,9 @@ internal sealed class CloudServices(HttpClient client)
 
     public ICloudService this[CloudProvider provider] => provider == CloudProvider.Aliyun ? aliyun : volcengine;
 
+    public Task<decimal> ReadAliyunOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
+        aliyun.ReadOcrUsageAsync(credentials, now, token);
+
     public static string Name(CloudProvider provider) => provider == CloudProvider.Aliyun ? "阿里云" : "火山引擎";
 
     public static DateTimeOffset BillingTime(DateTimeOffset time) => time.ToOffset(TimeSpan.FromHours(8));

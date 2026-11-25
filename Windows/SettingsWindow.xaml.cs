@@ -12,7 +12,7 @@ namespace Luqri;
 
 internal sealed class UsageCache
 {
-    public Dictionary<CloudProvider, (Credentials Credentials, string Month, decimal Total)> Entries { get; } = new();
+    public Dictionary<(CloudProvider Provider, bool Ocr), (Credentials Credentials, string Month, decimal Total)> Entries { get; } = new();
 }
 
 public partial class SettingsWindow : Window
@@ -37,7 +37,7 @@ public partial class SettingsWindow : Window
     private readonly Dictionary<Command, (Button Button, TextBlock Warning)> shortcutWidgets = new();
     private readonly Dictionary<CloudProvider, Credentials> credentialDrafts = new();
     private CommandInfo? recording;
-    private CancellationTokenSource? usageRequest;
+    private readonly Dictionary<ContentControl, CancellationTokenSource> usageRequests = new();
     private CloudProvider editingProvider;
     private bool initialized;
 
@@ -68,7 +68,11 @@ public partial class SettingsWindow : Window
         initialized = true;
         UpdateCredentialControls();
         UpdateShortcuts();
-        Loaded += (_, _) => _ = RefreshUsageAsync();
+        Loaded += (_, _) =>
+        {
+            _ = RefreshUsageAsync();
+            _ = RefreshUsageAsync(ocr: true);
+        };
     }
 
     private static void PopulateProvider(ComboBox box, CloudProvider value)
@@ -262,7 +266,7 @@ public partial class SettingsWindow : Window
         if (SavePreferences())
         {
             UpdateBillingLinks();
-            if (translation) _ = RefreshUsageAsync();
+            _ = RefreshUsageAsync(ocr: !translation);
             return;
         }
 
@@ -359,72 +363,84 @@ public partial class SettingsWindow : Window
     private void CredentialsChanged()
     {
         credentialDrafts.Remove(editingProvider);
-        usageCache.Entries.Remove(editingProvider);
+        usageCache.Entries.Remove((editingProvider, false));
+        usageCache.Entries.Remove((editingProvider, true));
         preferencesChanged();
         if (editingProvider == preferences.TranslationProvider) _ = RefreshUsageAsync();
+        if (editingProvider == preferences.OcrProvider) _ = RefreshUsageAsync(ocr: true);
     }
 
-    private async Task RefreshUsageAsync()
+    private async Task RefreshUsageAsync(bool ocr = false)
     {
-        usageRequest?.Cancel();
-        usageRequest = null;
-        UsageRing.Visibility = preferences.TranslationEnabled ? Visibility.Visible : Visibility.Hidden;
-        TranslationBilling.IsEnabled = preferences.TranslationEnabled;
-        if (!preferences.TranslationEnabled) return;
+        var ring = ocr ? OcrUsageRing : UsageRing;
+        if (usageRequests.Remove(ring, out var previous)) previous.Cancel();
+        var provider = ocr ? preferences.OcrProvider : preferences.TranslationProvider;
+        var enabled = ocr ? provider == CloudProvider.Aliyun : preferences.TranslationEnabled;
+        ring.Visibility = enabled ? Visibility.Visible : ocr ? Visibility.Collapsed : Visibility.Hidden;
+        if (!ocr) TranslationBilling.IsEnabled = enabled;
+        if (!enabled) return;
 
-        var current = usageRequest = new CancellationTokenSource();
-        var provider = preferences.TranslationProvider;
-        var quota = provider == CloudProvider.Aliyun ? Aliyun.FreeCharacters : Volcengine.FreeCharacters;
+        using var current = new CancellationTokenSource();
+        usageRequests[ring] = current;
+        var key = (provider, ocr);
+        var quota = ocr ? Aliyun.FreeOcrCalls : provider == CloudProvider.Aliyun ? Aliyun.FreeCharacters : Volcengine.FreeCharacters;
+        var service = ocr ? "OCR" : "机器翻译";
         decimal? cached = null;
         try
         {
             var credentials = Preferences.ReadCredentials(provider);
             if (credentials is null)
             {
-                DisplayUsage(null, quota, $"保存{CloudServices.Name(provider)}密钥后可查询本月用量。");
+                DisplayUsage(ring, null, quota, $"保存{CloudServices.Name(provider)}密钥后可查询本月{service}用量。");
                 return;
             }
 
             var now = DateTimeOffset.UtcNow;
             var month = CloudServices.BillingTime(now).ToString("yyyy-MM", CultureInfo.InvariantCulture);
-            if (usageCache.Entries.TryGetValue(provider, out var entry) && entry.Credentials == credentials && entry.Month == month)
+            if (usageCache.Entries.TryGetValue(key, out var entry) && entry.Credentials == credentials && entry.Month == month)
                 cached = entry.Total;
-            DisplayUsage(cached, quota, "正在查询本月机器翻译用量…");
-            var used = await cloud[provider].ReadUsageAsync(credentials, now, current.Token);
+            DisplayUsage(ring, cached, quota, $"正在查询本月{service}用量…");
+            var used = ocr
+                ? await cloud.ReadAliyunOcrUsageAsync(credentials, now, current.Token)
+                : await cloud[provider].ReadUsageAsync(credentials, now, current.Token);
             if (current.IsCancellationRequested) return;
-            usageCache.Entries[provider] = (credentials, month, used);
-            var tooltip = provider == CloudProvider.Aliyun
-                ? $"云端报表估算 · {used:N0} / {quota:N0} 字符\n最近的翻译可能尚未计入。"
-                : $"{used / 10000:N2} / {quota / 10000:N2} 万字符";
-            DisplayUsage(used, quota, tooltip);
+            usageCache.Entries[key] = (credentials, month, used);
+            var tooltip = ocr
+                ? $"本月 OCR 调用 · {used:N0} / {quota:N0} 次\n按操作审计统计，可能延迟。实际免费余额以阿里云控制台为准。"
+                : provider == CloudProvider.Aliyun
+                    ? $"云端报表估算 · {used:N0} / {quota:N0} 字符\n最近的翻译可能尚未计入。"
+                    : $"{used / 10000:N2} / {quota / 10000:N2} 万字符";
+            DisplayUsage(ring, used, quota, tooltip);
         }
         catch (Exception error)
         {
             if (!current.IsCancellationRequested)
-                DisplayUsage(cached, quota, $"无法查询本月用量。\n{CloudServices.DescribeError(provider, error)}");
+                DisplayUsage(ring, cached, quota, $"无法查询本月{service}用量。\n{CloudServices.DescribeError(provider, error)}");
         }
         finally
         {
-            if (usageRequest == current) usageRequest = null;
-            current.Dispose();
+            if (usageRequests.GetValueOrDefault(ring) == current) usageRequests.Remove(ring);
         }
     }
 
-    private void DisplayUsage(decimal? used, decimal quota, string tooltip)
+    private static void DisplayUsage(ContentControl ring, decimal? used, decimal quota, string tooltip)
     {
-        UsageRing.ToolTip = tooltip;
-        AutomationProperties.SetName(UsageRing, tooltip);
+        ring.ToolTip = tooltip;
+        AutomationProperties.SetName(ring, tooltip);
         var fraction = (double)Math.Clamp((used ?? 0) / quota, 0, 1);
-        if (fraction == 0) { UsageArc.Data = Geometry.Empty; return; }
-        if (fraction >= 1) { UsageArc.Data = new EllipseGeometry(new Point(8, 8), 6.5, 6.5); return; }
+        if (fraction == 0) { ring.Content = Geometry.Empty; return; }
+        if (fraction >= 1) { ring.Content = new EllipseGeometry(new Point(8, 8), 6.5, 6.5); return; }
         var angle = fraction * Math.Tau;
         var end = new Point(8 + 6.5 * Math.Sin(angle), 8 - 6.5 * Math.Cos(angle));
         var path = new PathFigure { StartPoint = new(8, 1.5), IsFilled = false };
         path.Segments.Add(new ArcSegment(end, new Size(6.5, 6.5), 0, fraction > 0.5, SweepDirection.Clockwise, true));
-        UsageArc.Data = new PathGeometry([path]);
+        ring.Content = new PathGeometry([path]);
     }
 
-    private void OnClosed(object? sender, EventArgs e) => usageRequest?.Cancel();
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        foreach (var request in usageRequests.Values.ToArray()) request.Cancel();
+    }
 
     private void OpenLink(object sender, RequestNavigateEventArgs e)
     {

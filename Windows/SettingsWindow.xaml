@@ -29,6 +29,27 @@
                 <Setter Property="Height" Value="1"/>
                 <Setter Property="Opacity" Value="0.55"/>
             </Style>
+            <Style x:Key="UsageRingStyle" TargetType="ContentControl">
+                <Setter Property="Width" Value="21"/>
+                <Setter Property="Height" Value="22"/>
+                <Setter Property="Margin" Value="0,0,8,0"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="Focusable" Value="True"/>
+                <Setter Property="ToolTipService.InitialShowDelay" Value="0"/>
+                <Setter Property="ToolTipService.ShowDuration" Value="12000"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ContentControl">
+                            <Grid Background="Transparent">
+                                <Ellipse Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Line}"/>
+                                <Path Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Accent}"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" Stretch="None"
+                                      Data="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
             <Style TargetType="Label">
                 <Setter Property="Padding" Value="0"/>
                 <Setter Property="VerticalAlignment" Value="Center"/>
@@ -108,13 +129,7 @@
                                   AutomationProperties.Name="启用机器翻译" Checked="CloudChanged" Unchecked="CloudChanged"/>
                         <ComboBox x:Name="TranslationProvider" DockPanel.Dock="Right" SelectionChanged="TranslationProviderChanged"
                                   Margin="0,0,8,0" AutomationProperties.Name="机器翻译服务商"/>
-                        <Grid x:Name="UsageRing" DockPanel.Dock="Right" Width="21" Height="22" Margin="0,0,8,0"
-                              VerticalAlignment="Center" Background="Transparent" Focusable="True"
-                              ToolTipService.InitialShowDelay="0" ToolTipService.ShowDuration="12000">
-                            <Ellipse Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Line}"/>
-                            <Path x:Name="UsageArc" Width="16" Height="16" StrokeThickness="3" Stroke="{DynamicResource Accent}"
-                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Stretch="None"/>
-                        </Grid>
+                        <ContentControl x:Name="UsageRing" DockPanel.Dock="Right" Style="{StaticResource UsageRingStyle}"/>
                         <TextBlock>
                             <Run Text="机器翻译"/><Run Text="   "/>
                             <Hyperlink x:Name="TranslationBilling" Foreground="{DynamicResource Accent}"
@@ -130,6 +145,8 @@
                 <DockPanel Style="{StaticResource Row}">
                     <ComboBox x:Name="OcrProvider" DockPanel.Dock="Right" SelectionChanged="OcrProviderChanged"
                               AutomationProperties.Name="OCR 服务商"/>
+                    <ContentControl x:Name="OcrUsageRing" DockPanel.Dock="Right" Style="{StaticResource UsageRingStyle}"
+                                    Visibility="Collapsed"/>
                     <TextBlock>
                         <Run Text="识别服务"/><Run Text="   "/>
                         <Hyperlink x:Name="OcrBilling" Foreground="{DynamicResource Accent}"
