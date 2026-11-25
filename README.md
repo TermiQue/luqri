@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="macOS/README.assets/cover.webp" alt="晨雾中的山脉与湖泊" width="100%">
+  <img src="macOS/README.assets/cover.webp" alt="清澈海水下的珊瑚礁" width="100%">
 </p>
 
 <p align="center">
