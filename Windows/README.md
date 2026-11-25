@@ -40,8 +40,9 @@ Luqri 是基于 WPF 和 Win32 的 Windows 托盘工具，支持划词翻译、�
 
 ## 服务与数据
 
-- 翻译和截图识别默认使用火山引擎，可以在设置中分别切换到阿里云。火山引擎的服务开通、密钥配置和用量查询见 [火山引擎通用配置](../README.md#配置火山引擎)。
-- 在「访问密钥」中选中对应服务商后保存或移除密钥。密钥经 Windows DPAPI 加密，分别保存在 `%LOCALAPPDATA%\Luqri\volcengine.bin` 和 `%LOCALAPPDATA%\Luqri\aliyun.bin`。
+- 翻译和截图识别默认使用火山引擎。设置中可同时勾选多个翻译服务，浮窗按服务商显示译文。截图识别单独选择服务商。火山引擎的服务开通、密钥配置和用量查询见 [火山引擎通用配置](../README.md#配置火山引擎)。
+- 在「访问密钥」中选择服务商，可保存、复制或移除对应密钥。已保存的密钥经 Windows DPAPI 加密，分别存放于 `%LOCALAPPDATA%\Luqri\volcengine.bin` 和 `%LOCALAPPDATA%\Luqri\aliyun.bin`。
+- 火山引擎翻译、阿里云翻译和阿里云 OCR 会检查月度用量。已达到额度、预计本次会超额或无法核验额度时，Luqri 会提示并跳过该服务的请求。云端报表可能延迟，Luqri 同时计入本机已发出的请求。
 
 ### 阿里云
 

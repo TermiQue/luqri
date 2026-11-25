@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Windows.Input;
 
@@ -90,12 +91,11 @@ internal sealed class Preferences
 
     public string? Source { get; set; }
     public string? Target { get; set; }
-    public bool TranslationEnabled { get; set; } = true;
-    public CloudProvider TranslationProvider
-    {
-        get;
-        set => field = value == CloudProvider.Aliyun ? value : CloudProvider.Volcengine;
-    }
+    public CloudProvider[]? TranslationProviders { get; set; }
+    [JsonPropertyName("TranslationEnabled"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? LegacyTranslationEnabled { get; set; }
+    [JsonPropertyName("TranslationProvider"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CloudProvider? LegacyTranslationProvider { get; set; }
     public CloudProvider OcrProvider
     {
         get;
@@ -106,9 +106,21 @@ internal sealed class Preferences
     public Shortcut Binding(CommandInfo command) => Bindings.TryGetValue(command.Id, out var shortcut) && shortcut.IsValid
         ? shortcut : command.Default;
 
+    public bool UsesTranslation(CloudProvider provider) => TranslationProviders is { } providers
+        ? providers.Contains(provider)
+        : LegacyTranslationEnabled != false &&
+            provider == (LegacyTranslationProvider == CloudProvider.Aliyun ? CloudProvider.Aliyun : CloudProvider.Volcengine);
+
     public static Preferences Load()
     {
-        try { return JsonSerializer.Deserialize<Preferences>(File.ReadAllBytes(SettingsPath)) ?? new(); }
+        try
+        {
+            var preferences = JsonSerializer.Deserialize<Preferences>(File.ReadAllBytes(SettingsPath)) ?? new();
+            preferences.TranslationProviders = CloudServices.Providers.Where(preferences.UsesTranslation).ToArray();
+            preferences.LegacyTranslationEnabled = null;
+            preferences.LegacyTranslationProvider = null;
+            return preferences;
+        }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return new(); }
     }
 
@@ -137,7 +149,9 @@ internal sealed class Preferences
 
     public static void RemoveCredentials(CloudProvider provider) => File.Delete(CredentialsPath(provider));
 
-    private static void WriteAtomically(string path, byte[] data)
+    internal static string QuotaPath(string name) => Path.Combine(DirectoryPath, name);
+
+    internal static void WriteAtomically(string path, byte[] data)
     {
         Directory.CreateDirectory(DirectoryPath);
         var temporary = path + ".tmp";

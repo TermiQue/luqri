@@ -57,21 +57,21 @@ public partial class SettingsWindow : Window
 
         PopulateLanguage(SourceLanguage, "自动检测", preferences.Source);
         PopulateLanguage(TargetLanguage, "自动选择", preferences.Target);
-        PopulateProvider(TranslationProvider, preferences.TranslationProvider);
         PopulateProvider(OcrProvider, preferences.OcrProvider);
-        editingProvider = preferences.TranslationProvider == CloudProvider.Aliyun ? CloudProvider.Aliyun : preferences.OcrProvider;
+        editingProvider = preferences.UsesTranslation(CloudProvider.Aliyun) ? CloudProvider.Aliyun : preferences.OcrProvider;
         PopulateProvider(CredentialProvider, editingProvider);
         UpdateBillingLinks();
-        EnableCloud.IsChecked = preferences.TranslationEnabled;
+        EnableVolcengine.IsChecked = preferences.UsesTranslation(CloudProvider.Volcengine);
+        EnableAliyun.IsChecked = preferences.UsesTranslation(CloudProvider.Aliyun);
         BuildShortcutRows();
         LoadCredentials();
         initialized = true;
         UpdateCredentialControls();
         UpdateShortcuts();
-        Loaded += (_, _) =>
+        Activated += (_, _) =>
         {
-            _ = RefreshUsageAsync();
-            _ = RefreshUsageAsync(ocr: true);
+            foreach (var provider in CloudServices.Providers) _ = RefreshUsageAsync(provider);
+            _ = RefreshUsageAsync(preferences.OcrProvider, ocr: true);
         };
     }
 
@@ -86,9 +86,6 @@ public partial class SettingsWindow : Window
 
     private void UpdateBillingLinks()
     {
-        TranslationBilling.NavigateUri = new(preferences.TranslationProvider == CloudProvider.Aliyun
-            ? "https://help.aliyun.com/zh/machine-translation/product-overview/pricing-of-machine-translation-general-purpose-edition"
-            : "https://docs.volcengine.com/docs/machine-translation/product-billing");
         OcrBilling.NavigateUri = new(preferences.OcrProvider == CloudProvider.Aliyun
             ? "https://help.aliyun.com/zh/ocr/developer-reference/api-ocr-api-2021-07-07-recognizealltext"
             : "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1");
@@ -238,42 +235,38 @@ public partial class SettingsWindow : Window
         initialized = true;
     }
 
-    private void CloudChanged(object sender, RoutedEventArgs e)
+    private void TranslationChanged(object sender, RoutedEventArgs e)
     {
         if (!initialized) return;
-        var previous = preferences.TranslationEnabled;
-        preferences.TranslationEnabled = EnableCloud.IsChecked == true;
-        if (SavePreferences()) _ = RefreshUsageAsync();
+        var provider = sender == EnableAliyun ? CloudProvider.Aliyun : CloudProvider.Volcengine;
+        var previous = preferences.TranslationProviders;
+        preferences.TranslationProviders = CloudServices.Providers.Where(item =>
+            (item == CloudProvider.Aliyun ? EnableAliyun : EnableVolcengine).IsChecked == true).ToArray();
+        if (SavePreferences()) _ = RefreshUsageAsync(provider);
         else
         {
-            preferences.TranslationEnabled = previous;
+            preferences.TranslationProviders = previous;
             initialized = false;
-            EnableCloud.IsChecked = previous;
+            ((CheckBox)sender).IsChecked = preferences.UsesTranslation(provider);
             initialized = true;
         }
     }
 
-    private void TranslationProviderChanged(object sender, SelectionChangedEventArgs e) => ChangeProvider(TranslationProvider, true);
-
-    private void OcrProviderChanged(object sender, SelectionChangedEventArgs e) => ChangeProvider(OcrProvider, false);
-
-    private void ChangeProvider(ComboBox box, bool translation)
+    private void OcrProviderChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!initialized || box.SelectedItem is not ProviderChoice choice) return;
-        var previous = translation ? preferences.TranslationProvider : preferences.OcrProvider;
-        if (translation) preferences.TranslationProvider = choice.Value;
-        else preferences.OcrProvider = choice.Value;
+        if (!initialized || OcrProvider.SelectedItem is not ProviderChoice choice) return;
+        var previous = preferences.OcrProvider;
+        preferences.OcrProvider = choice.Value;
         if (SavePreferences())
         {
             UpdateBillingLinks();
-            _ = RefreshUsageAsync(ocr: !translation);
+            _ = RefreshUsageAsync(choice.Value, ocr: true);
             return;
         }
 
-        if (translation) preferences.TranslationProvider = previous;
-        else preferences.OcrProvider = previous;
+        preferences.OcrProvider = previous;
         initialized = false;
-        SelectProvider(box, previous);
+        SelectProvider(OcrProvider, previous);
         initialized = true;
     }
 
@@ -317,8 +310,12 @@ public partial class SettingsWindow : Window
         LoadCredentials();
     }
 
-    private void UpdateCredentialControls() => SaveKeys.IsEnabled =
-        !string.IsNullOrWhiteSpace(AccessKey.Password) && !string.IsNullOrWhiteSpace(SecretKey.Password);
+    private void UpdateCredentialControls()
+    {
+        CopyAccessKey.IsEnabled = !string.IsNullOrWhiteSpace(AccessKey.Password);
+        CopySecretKey.IsEnabled = !string.IsNullOrWhiteSpace(SecretKey.Password);
+        SaveKeys.IsEnabled = CopyAccessKey.IsEnabled && CopySecretKey.IsEnabled;
+    }
 
     private void CredentialChanged(object sender, RoutedEventArgs e)
     {
@@ -327,6 +324,18 @@ public partial class SettingsWindow : Window
 
     private void PasteAccess(object sender, RoutedEventArgs e) => PasteKey(AccessKey);
     private void PasteSecret(object sender, RoutedEventArgs e) => PasteKey(SecretKey);
+    private void CopyAccess(object sender, RoutedEventArgs e) => CopyKey(AccessKey);
+    private void CopySecret(object sender, RoutedEventArgs e) => CopyKey(SecretKey);
+
+    private void CopyKey(PasswordBox field)
+    {
+        try
+        {
+            Clipboard.SetText(field.Password);
+            CredentialStatus.Text = "已复制密钥";
+        }
+        catch (ExternalException) { CredentialStatus.Text = "无法写入剪贴板，请重试。"; }
+    }
 
     private void PasteKey(PasswordBox field)
     {
@@ -366,18 +375,16 @@ public partial class SettingsWindow : Window
         usageCache.Entries.Remove((editingProvider, false));
         usageCache.Entries.Remove((editingProvider, true));
         preferencesChanged();
-        if (editingProvider == preferences.TranslationProvider) _ = RefreshUsageAsync();
-        if (editingProvider == preferences.OcrProvider) _ = RefreshUsageAsync(ocr: true);
+        if (preferences.UsesTranslation(editingProvider)) _ = RefreshUsageAsync(editingProvider);
+        if (editingProvider == preferences.OcrProvider) _ = RefreshUsageAsync(editingProvider, ocr: true);
     }
 
-    private async Task RefreshUsageAsync(bool ocr = false)
+    private async Task RefreshUsageAsync(CloudProvider provider, bool ocr = false)
     {
-        var ring = ocr ? OcrUsageRing : UsageRing;
+        var ring = ocr ? OcrUsageRing : provider == CloudProvider.Aliyun ? AliyunUsageRing : VolcengineUsageRing;
         if (usageRequests.Remove(ring, out var previous)) previous.Cancel();
-        var provider = ocr ? preferences.OcrProvider : preferences.TranslationProvider;
-        var enabled = ocr ? provider == CloudProvider.Aliyun : preferences.TranslationEnabled;
+        var enabled = ocr ? provider == CloudProvider.Aliyun : preferences.UsesTranslation(provider);
         ring.Visibility = enabled ? Visibility.Visible : ocr ? Visibility.Collapsed : Visibility.Hidden;
-        if (!ocr) TranslationBilling.IsEnabled = enabled;
         if (!enabled) return;
 
         using var current = new CancellationTokenSource();
@@ -406,10 +413,8 @@ public partial class SettingsWindow : Window
             if (current.IsCancellationRequested) return;
             usageCache.Entries[key] = (credentials, month, used);
             var tooltip = ocr
-                ? $"本月 OCR 调用 · {used:N0} / {quota:N0} 次\n按操作审计统计，可能延迟。实际免费余额以阿里云控制台为准。"
-                : provider == CloudProvider.Aliyun
-                    ? $"云端报表估算 · {used:N0} / {quota:N0} 字符\n最近的翻译可能尚未计入。"
-                    : $"{used / 10000:N2} / {quota / 10000:N2} 万字符";
+                ? FormattableString.Invariant($"{used:0}/{quota:0}次")
+                : FormattableString.Invariant($"{used / 10000:0.00}/{quota / 10000:0.00}万字符");
             DisplayUsage(ring, used, quota, tooltip);
         }
         catch (Exception error)

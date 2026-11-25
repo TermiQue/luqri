@@ -18,6 +18,7 @@ internal sealed class Volcengine(HttpClient client) : ICloudService
     private static readonly Operation Billing = new("open.volcengineapi.com", "Action=ListBillDetail&Version=2022-01-01", "billing");
     private static readonly JsonSerializerOptions Json = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     public const decimal FreeCharacters = 2_000_000;
+    private readonly MonthlyQuota translationQuota = new("volcengine-translate", "火山引擎机器翻译", FreeCharacters, "字符");
 
     public async Task<string> TranslateAsync(string text, TranslationLanguage? source, TranslationLanguage target, Credentials credentials, CancellationToken token)
     {
@@ -37,7 +38,8 @@ internal sealed class Volcengine(HttpClient client) : ICloudService
             {
                 SourceLanguage = sourceCode, TargetLanguage = target.CloudCode, TextList = new[] { content }
             }, Json);
-            using var response = await SendAsync(Translation, payload, credentials, token).ConfigureAwait(false);
+            using var response = await translationQuota.SendAsync(credentials, content.Length, QueryUsageAsync,
+                () => SendAsync(Translation, payload, credentials, token), token).ConfigureAwait(false);
             var list = Field(response.RootElement, "TranslationList");
             if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() == 0 ||
                 String(list[0], "Translation") is not { Length: > 0 } translated)
@@ -93,7 +95,10 @@ internal sealed class Volcengine(HttpClient client) : ICloudService
         return new Rect(new Point(left, top), new Point(right, bottom));
     }
 
-    public async Task<decimal> ReadUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
+    public Task<decimal> ReadUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
+        translationQuota.ReadAsync(credentials, now, QueryUsageAsync, token);
+
+    private async Task<decimal> QueryUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
     {
         const int pageSize = 100;
         var month = CloudServices.BillingTime(now).ToString("yyyy-MM", CultureInfo.InvariantCulture);
@@ -155,9 +160,11 @@ internal sealed class Volcengine(HttpClient client) : ICloudService
             catch (JsonException) when (!response.IsSuccessStatusCode) { }
             var error = result is null ? default : Field(Field(result.RootElement, "ResponseMetadata"), "Error");
             if (String(error, "Code") is { } code)
-                throw new InvalidOperationException($"火山引擎返回 {code} · {String(error, "Message")}");
+                throw new CloudRejectedException($"火山引擎返回 {code} · {String(error, "Message")}");
             if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException($"火山引擎请求失败（HTTP {(int)response.StatusCode}）。");
+                throw (int)response.StatusCode < 500
+                    ? new CloudRejectedException($"火山引擎请求失败（HTTP {(int)response.StatusCode}）。")
+                    : new InvalidOperationException($"火山引擎请求失败（HTTP {(int)response.StatusCode}）。");
             return result!;
         }
         catch

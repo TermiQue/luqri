@@ -16,6 +16,7 @@ internal interface ICloudService
 
 internal sealed class CloudServices(HttpClient client)
 {
+    public static readonly CloudProvider[] Providers = [CloudProvider.Volcengine, CloudProvider.Aliyun];
     private readonly Volcengine volcengine = new(client);
     private readonly Aliyun aliyun = new(client);
 

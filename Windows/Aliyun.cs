@@ -20,6 +20,8 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
     private const string ReportDateFormat = "yyyy-MM-dd HH:mm:ss";
     public const decimal FreeCharacters = 1_000_000;
     public const decimal FreeOcrCalls = 200;
+    private readonly MonthlyQuota translationQuota = new("aliyun-translate", "阿里云机器翻译", FreeCharacters, "字符");
+    private readonly MonthlyQuota ocrQuota = new("aliyun-ocr", "阿里云 OCR", FreeOcrCalls, "次");
 
     public async Task<string> TranslateAsync(string text, TranslationLanguage? source, TranslationLanguage target,
         Credentials credentials, CancellationToken token)
@@ -69,14 +71,20 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
             ["TargetLanguage"] = target, ["SourceText"] = text
         });
         var body = await content.ReadAsByteArrayAsync(token).ConfigureAwait(false);
-        using var response = await SendAsync(Translation, HttpMethod.Post, null, body,
-            "application/x-www-form-urlencoded", credentials, token).ConfigureAwait(false);
-        var data = RequireTranslationData(response.RootElement);
-        return String(data, "Translated") is { Length: > 0 } translated ? translated
-            : throw new InvalidOperationException("阿里云未返回译文。");
+        return await translationQuota.SendAsync(credentials, text.Length, QueryUsageAsync, async () =>
+        {
+            using var response = await SendAsync(Translation, HttpMethod.Post, null, body,
+                "application/x-www-form-urlencoded", credentials, token).ConfigureAwait(false);
+            var data = RequireTranslationData(response.RootElement);
+            return String(data, "Translated") is { Length: > 0 } translated ? translated
+                : throw new InvalidOperationException("阿里云未返回译文。");
+        }, token).ConfigureAwait(false);
     }
 
-    public async Task<decimal> ReadUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
+    public Task<decimal> ReadUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
+        translationQuota.ReadAsync(credentials, now, QueryUsageAsync, token);
+
+    private async Task<decimal> QueryUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
     {
         var end = CloudServices.BillingTime(now);
         var begin = new DateTimeOffset(end.Year, end.Month, 1, 0, 0, 0, end.Offset);
@@ -101,7 +109,10 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
         return total;
     }
 
-    public async Task<decimal> ReadOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
+    public Task<decimal> ReadOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token) =>
+        ocrQuota.ReadAsync(credentials, now, QueryOcrUsageAsync, token);
+
+    private async Task<decimal> QueryOcrUsageAsync(Credentials credentials, DateTimeOffset now, CancellationToken token)
     {
         var local = CloudServices.BillingTime(now);
         var end = DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds());
@@ -162,13 +173,15 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
             ["MultiLanConfig"] = JsonSerializer.Serialize(new { Languages }),
             ["OutputCoordinate"] = "points"
         };
-        using var response = await SendAsync(Ocr, HttpMethod.Post, parameters, body,
-            "application/octet-stream", credentials, token).ConfigureAwait(false);
-        var root = response.RootElement;
-        if (Scalar(root, "Code") is { Length: > 0 } code && code is not ("200" or "Success"))
-            throw ServiceError(root, code);
-
-        using var data = ParseEmbeddedData(Field(root, "Data"));
+        using var data = await ocrQuota.SendAsync(credentials, 1, QueryOcrUsageAsync, async () =>
+        {
+            using var response = await SendAsync(Ocr, HttpMethod.Post, parameters, body,
+                "application/octet-stream", credentials, token).ConfigureAwait(false);
+            var root = response.RootElement;
+            if (Scalar(root, "Code") is { Length: > 0 } code && code is not ("200" or "Success"))
+                throw ServiceError(root, code);
+            return ParseEmbeddedData(Field(root, "Data"));
+        }, token).ConfigureAwait(false);
         var images = Field(data.RootElement, "SubImages");
         IEnumerable<OcrLine> lines = images.ValueKind == JsonValueKind.Array
             ? images.EnumerateArray()
@@ -276,7 +289,7 @@ internal sealed class Aliyun(HttpClient client) : ICloudService
         return Field(response, "Data");
     }
 
-    private static InvalidOperationException ServiceError(JsonElement response, string code) =>
+    private static CloudRejectedException ServiceError(JsonElement response, string code) =>
         string.Equals(code, "ocrServiceNotOpen", StringComparison.OrdinalIgnoreCase)
             ? new("阿里云 OCR 统一识别尚未开通。请在文字识别控制台的「服务管理与开通」中开通此服务。")
             : new($"阿里云返回 {code} · {String(response, "Message") ?? "请求失败。"}");

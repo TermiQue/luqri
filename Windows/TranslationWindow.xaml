@@ -62,33 +62,7 @@
                 <TextBlock x:Name="Notice" TextWrapping="Wrap" Foreground="{DynamicResource Muted}"
                            Margin="3,8,3,0" Visibility="Collapsed" FontSize="13"/>
 
-                <Border x:Name="ServiceCard" Background="{DynamicResource Card}" CornerRadius="9" Margin="0,8,0,0">
-                    <StackPanel>
-                        <Button x:Name="ServiceHeader" Style="{StaticResource FlatButton}" Background="Transparent"
-                                Height="34" HorizontalContentAlignment="Stretch" Padding="9,0"
-                                Click="ToggleResult">
-                            <DockPanel>
-                                <local:Icon x:Name="Chevron" DockPanel.Dock="Right" Width="13" Height="13"
-                                            Stroke="{DynamicResource Muted}" Glyph="chevron-right"/>
-                                <local:Icon x:Name="ServiceIcon" DockPanel.Dock="Left" Stroke="{DynamicResource Accent}" Margin="0,0,8,0"/>
-                                <TextBlock x:Name="ServiceName" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            </DockPanel>
-                        </Button>
-                        <StackPanel x:Name="ResultPanel" Visibility="Collapsed" Margin="10,0,10,8">
-                            <Border Background="{DynamicResource Line}" Height="1" Margin="0,0,0,7"/>
-                            <TextBlock x:Name="ResultStatus" Margin="1,0" TextWrapping="Wrap" Foreground="{DynamicResource Muted}"/>
-                            <TextBox x:Name="Result" Style="{StaticResource TextEditor}" BorderThickness="0"
-                                     Padding="0" FontSize="14" MaxHeight="220" IsReadOnly="True" Visibility="Collapsed"
-                                     AutomationProperties.Name="译文"/>
-                            <StackPanel x:Name="ResultActions" Orientation="Horizontal" Margin="0,5,0,0" Visibility="Collapsed">
-                                <Button Style="{StaticResource IconButton}" Click="SpeakResult" x:Name="ResultSpeak"
-                                        ToolTip="朗读译文" AutomationProperties.Name="朗读译文"><local:Icon x:Name="ResultSpeaker" Glyph="volume-2"/></Button>
-                                <Button Style="{StaticResource IconButton}" Click="CopyResult" x:Name="ResultCopy"
-                                        ToolTip="复制译文" AutomationProperties.Name="复制译文"><local:Icon x:Name="ResultCopyIcon" Glyph="copy"/></Button>
-                            </StackPanel>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
+                <StackPanel x:Name="ServiceCards"/>
 
                 <Border x:Name="DisabledCard" Background="{DynamicResource Card}" CornerRadius="9"
                         Margin="0,8,0,0" Padding="10,5" Visibility="Collapsed">
