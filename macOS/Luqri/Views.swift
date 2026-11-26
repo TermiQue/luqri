@@ -123,6 +123,7 @@ struct TranslationView: View {
     private static let editorPadding: CGFloat = 8
 
     @State private var editorFocused = false
+    @State private var editorMeasurements = TranslationEditor.HeightCache()
     @State private var pinned = false
     @State private var collapsedProviders = Set<Provider>()
     @State private var copiedSource = false
@@ -138,9 +139,7 @@ struct TranslationView: View {
     let setPinned: (Bool) -> Void
     let resize: (CGSize) -> Void
 
-    private var hasText: Bool {
-        model.text.hasNonWhitespace
-    }
+    private var hasText: Bool { model.hasText }
 
     private var editorText: Binding<String> {
         Binding(get: { model.text }, set: { model.edit($0) })
@@ -152,13 +151,19 @@ struct TranslationView: View {
 
     var body: some View {
         let providers = model.enabledProviders
-        let editorHeight = TranslationEditor.fittingHeight(
+        let expanded = hasText ? providers.filter { !collapsedProviders.contains($0) }.count : 0
+        let visibleResults = CGFloat(max(1, expanded))
+        // Reserve room for the service cards and their controls on short displays.
+        let controlsHeight = 110 + 42 * CGFloat(providers.count) + 50 * visibleResults
+        let speechErrorHeight: CGFloat = speech?.error == nil ? 0 : 32
+        let contentHeight = availableHeight - controlsHeight - speechErrorHeight
+        let editorLimit = max(TranslationEditor.minimumHeight, contentHeight - 48 * visibleResults)
+        let editorHeight = editorMeasurements.height(
             for: model.isLoadingInput ? "" : model.text,
             width: Self.preferredWidth - 2 * (Self.windowPadding + Self.editorPadding),
-            maximumHeight: min(TranslationEditor.maximumHeight, availableHeight * 0.3)
+            maximumHeight: min(TranslationEditor.maximumHeight, availableHeight * 0.3, editorLimit)
         )
-        let expandedCount = hasText ? providers.filter { !collapsedProviders.contains($0) }.count : 0
-        let resultHeight = resultHeightLimit(editorHeight: editorHeight, providers: providers.count, expanded: expandedCount)
+        let resultHeight = max(24, min(expanded > 1 ? 160 : 220, (contentHeight - editorHeight) / visibleResults))
         VStack(alignment: .leading, spacing: 8) {
             header
             editor(height: editorHeight)
@@ -188,7 +193,9 @@ struct TranslationView: View {
                 .strokeBorder(.primary.opacity(0.15), lineWidth: 1)
                 .allowsHitTesting(false)
         }
-        .onGeometryChange(for: CGSize.self, of: \.size, action: resize)
+        .onGeometryChange(for: CGSize.self, of: { proxy in
+            CGSize(width: ceil(proxy.size.width), height: ceil(proxy.size.height))
+        }, action: resize)
         .onDisappear { speech?.stop() }
         .onChange(of: model.text) {
             copiedSource = false
@@ -213,15 +220,6 @@ struct TranslationView: View {
                     .id(job.id)
             }
         }
-    }
-
-    private func resultHeightLimit(editorHeight: CGFloat, providers: Int, expanded: Int) -> CGFloat {
-        let visibleResults = CGFloat(max(1, expanded))
-        // Reserve the header, input controls, service headers, and result buttons.
-        let controlsHeight = 110 + 42 * CGFloat(providers) + 50 * visibleResults
-        let speechErrorHeight: CGFloat = speech?.error == nil ? 0 : 32
-        let remaining = availableHeight - editorHeight - controlsHeight - speechErrorHeight
-        return max(48, min(expanded > 1 ? 160 : 220, remaining / visibleResults))
     }
 
     private func notice(_ message: String, action: String, perform: @escaping () -> Void) -> some View {
@@ -334,7 +332,7 @@ struct TranslationView: View {
                 }
             } label: {
                 HStack(spacing: 8) {
-                    LucideIcon(name: provider == .apple ? "languages" : "flame", size: 14)
+                    LucideIcon(name: provider == .volcengine ? "flame" : "languages", size: 14)
                         .foregroundStyle(Color.accentColor)
                     Text(provider.title)
                         .font(.system(size: 14, weight: .medium))
@@ -445,6 +443,8 @@ private struct TranslationEditor: NSViewRepresentable {
     static let maximumHeight: CGFloat = 176
     private static let linePadding: CGFloat = 5
     private static let verticalInset: CGFloat = 1
+    private static let layoutProbeLength = 4_096
+    private static let paragraphBreaks = CharacterSet(charactersIn: "\r\n\u{2029}")
 
     @Binding var text: String
     let inputError: String?
@@ -452,15 +452,49 @@ private struct TranslationEditor: NSViewRepresentable {
 
     static func fittingHeight(for text: String, width: CGFloat, maximumHeight: CGFloat) -> CGFloat {
         guard !text.isEmpty else { return minimumHeight }
-        let measuredText = text.last?.isNewline == true ? text + " " : text
-        let bounds = (measuredText as NSString).boundingRect(
-            // Measure far enough to include the line that crosses the viewport limit.
-            with: CGSize(width: max(1, width - 2 * linePadding), height: maximumHeight + 2 * fontSize),
+        let storage = text as NSString
+        let viewport = CGSize(width: max(1, width - 2 * linePadding), height: maximumHeight + 2 * fontSize)
+        if storage.length > layoutProbeLength {
+            // Complete paragraphs let us bound the height without shaping the rest of a long paste.
+            let range = NSRange(location: 0, length: layoutProbeLength)
+            let paragraph = storage.rangeOfCharacter(from: paragraphBreaks, options: .backwards, range: range)
+            if paragraph.location != NSNotFound {
+                var end = NSMaxRange(paragraph)
+                if storage.character(at: end - 1) == 13, storage.character(at: end) == 10 { end += 1 }
+                let prefix = storage.substring(to: end) as NSString
+                if measuredHeight(of: prefix, viewport: viewport) >= maximumHeight {
+                    return max(minimumHeight, maximumHeight)
+                }
+            }
+        }
+        let measured = text.last?.isNewline == true ? (text + " ") as NSString : storage
+        return max(minimumHeight, min(maximumHeight, measuredHeight(of: measured, viewport: viewport)))
+    }
+
+    private static func measuredHeight(of text: NSString, viewport: CGSize) -> CGFloat {
+        let bounds = text.boundingRect(
+            with: viewport,
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: NSFont.systemFont(ofSize: fontSize)],
             context: nil
         )
-        return max(minimumHeight, min(maximumHeight, ceil(bounds.height) + 2 * verticalInset))
+        return ceil(bounds.height) + 2 * verticalInset
+    }
+
+    @MainActor
+    final class HeightCache {
+        private var text: String?
+        private var width: CGFloat = 0
+        private var intrinsicHeight: CGFloat = minimumHeight
+
+        func height(for text: String, width: CGFloat, maximumHeight: CGFloat) -> CGFloat {
+            if self.text != text || self.width != width {
+                intrinsicHeight = fittingHeight(for: text, width: width, maximumHeight: TranslationEditor.maximumHeight)
+                self.text = text
+                self.width = width
+            }
+            return max(minimumHeight, min(maximumHeight, intrinsicHeight))
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -504,10 +538,14 @@ private struct TranslationEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.editor = self
         guard let editor = scroll.documentView as? EditorView else { return }
-        editor.placeholder = inputError ?? "输入或粘贴文字"
-        editor.setAccessibilityHelp(inputError)
-        if editor.string != text, !editor.hasMarkedText() {
+        let placeholder = inputError ?? "输入或粘贴文字"
+        if editor.placeholder != placeholder {
+            editor.placeholder = placeholder
+            editor.setAccessibilityHelp(inputError)
+        }
+        if context.coordinator.committedText != text, !editor.hasMarkedText() {
             editor.string = text
+            context.coordinator.committedText = text
             editor.needsDisplay = true
         }
     }
@@ -515,6 +553,7 @@ private struct TranslationEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var editor: TranslationEditor
+        var committedText = ""
 
         init(_ editor: TranslationEditor) { self.editor = editor }
 
@@ -525,8 +564,10 @@ private struct TranslationEditor: NSViewRepresentable {
         }
 
         func publishCommittedText(from view: EditorView) {
-            guard !view.isSettingMarkedText, !view.hasMarkedText(), editor.text != view.string else { return }
-            editor.text = view.string
+            guard !view.isSettingMarkedText, !view.hasMarkedText() else { return }
+            let text = view.string
+            committedText = text
+            if editor.text != text { editor.text = text }
         }
     }
 
@@ -615,344 +656,6 @@ private struct LoadingIndicator: View {
                 Circle()
                     .frame(width: 4, height: 4)
                     .opacity(highlighted == nil || highlighted == index ? 1 : 0.25)
-            }
-        }
-    }
-}
-
-struct SettingsView: View {
-    static let preferredSize = CGSize(width: 466, height: 590)
-    private static let usageHoverWidth: CGFloat = 22
-
-    private enum UsageState {
-        case loading(TranslationUsage?), missingCredentials
-        case loaded(TranslationUsage)
-        case failed(TranslationUsage?, String)
-
-        var usage: TranslationUsage? {
-            switch self {
-            case .loading(let usage), .failed(let usage, _): usage
-            case .loaded(let usage): usage
-            case .missingCredentials: nil
-            }
-        }
-
-        var detail: String {
-            switch self {
-            case .loading: "正在查询本月机器翻译用量…"
-            case .missingCredentials: "保存火山引擎密钥后可查询本月用量。"
-            case .loaded(let usage): usage.detail
-            case .failed(_, let message): "无法查询本月用量。\n\(message)"
-            }
-        }
-    }
-
-    @Bindable var model: TranslationModel
-    let shortcuts: GlobalShortcuts
-    let usageCache: TranslationUsageCache
-    let requestPermission: (AppPermission) -> Void
-    @AppStorage(OCRProvider.preferenceKey) private var ocrProvider = OCRProvider.appleVision
-    @State private var accessKey = ""
-    @State private var secretKey = ""
-    @State private var status = ""
-    @State private var hasCredentials = false
-    @State private var grantedPermissions: Set<AppPermission> = []
-    @State private var usageState = UsageState.loading(nil)
-    @State private var usageRefreshID = 0
-    @State private var isUsageHovered = false
-
-    private var isVolcengineEnabled: Bool { model.enabledProviders.contains(.volcengine) }
-
-    var body: some View {
-        Form {
-            Section("翻译服务") {
-                Picker("原文语言", selection: $model.source) {
-                    Text("自动检测").tag(nil as Language?)
-                    ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
-                }
-                Picker("译文语言", selection: $model.target) {
-                    Text("自动选择").tag(nil as Language?)
-                    ForEach(Language.allCases) { Text($0.title).tag(Optional($0)) }
-                }
-                ForEach(Provider.allCases) { provider in
-                    LabeledContent {
-                        HStack(spacing: 11) {
-                            if provider == .volcengine, isVolcengineEnabled { translationUsageRing }
-                            Toggle(provider.title, isOn: Binding(
-                                get: { model.enabledProviders.contains(provider) },
-                                set: { model.setEnabled($0, for: provider) }
-                            ))
-                            .labelsHidden()
-                        }
-                        .frame(minHeight: provider == .volcengine ? 22 : nil)
-                    } label: {
-                        HStack(spacing: 10) {
-                            Text(provider.title)
-                            if provider == .volcengine {
-                                billingLink(
-                                    "机器翻译开通与计费",
-                                    destination: URL(string: "https://docs.volcengine.com/docs/machine-translation/product-billing")!
-                                )
-                                .opacity(isVolcengineEnabled ? 1 : 0)
-                                .allowsHitTesting(isVolcengineEnabled)
-                                .disabled(!isVolcengineEnabled)
-                                .accessibilityHidden(!isVolcengineEnabled)
-                            }
-                        }
-                    }
-                }
-            }
-
-            Section("OCR 服务") {
-                LabeledContent {
-                    Picker("识别服务", selection: $ocrProvider) {
-                        ForEach(OCRProvider.allCases) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                } label: {
-                    HStack(spacing: 10) {
-                        Text("识别服务")
-                        if ocrProvider == .volcengine {
-                            billingLink(
-                                "多语种 OCR 开通与计费",
-                                destination: URL(string: "https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1")!
-                            )
-                        }
-                    }
-                }
-            }
-
-            Section("火山引擎") {
-                credentialField("Access Key ID", text: $accessKey)
-                credentialField("Secret Access Key", text: $secretKey)
-                HStack {
-                    if !status.isEmpty {
-                        Text(status)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if hasCredentials {
-                        Button("移除密钥", role: .destructive, action: removeCredentials)
-                    }
-                    Button("保存密钥", action: saveCredentials)
-                        .disabled(accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                  || secretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-
-            Section("快捷键") {
-                ForEach(Command.allCases, id: \.self) { command in
-                    LabeledContent(command.title) {
-                        if shortcuts.failed.contains(command) {
-                            Text("不可用").foregroundStyle(.secondary)
-                        }
-                        Button(shortcuts.recording == command ? "请按键…" : shortcuts.binding(for: command).label) {
-                            shortcuts.beginRecording(command, in: NSApp.keyWindow)
-                        }
-                        .monospaced()
-                        .accessibilityHint("点击录制快捷键，按 Esc 取消")
-                    }
-                }
-                HStack {
-                    if let message = shortcuts.message ?? (shortcuts.recording == nil ? nil : "按 Esc 取消录制") {
-                        Text(message)
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                    }
-                    Spacer()
-                    Button("恢复默认") { shortcuts.restoreDefaults() }
-                }
-            }
-
-            Section("系统权限") {
-                ForEach(AppPermission.allCases, id: \.self) { permission in
-                    let granted = grantedPermissions.contains(permission)
-                    LabeledContent(permission.title) {
-                        Text(granted ? "已授权" : "未授权")
-                            .foregroundStyle(.secondary)
-                        Button(granted ? "管理…" : "授权…") {
-                            if permission.isGranted { permission.openSettings() }
-                            else { requestPermission(permission) }
-                        }
-                            .accessibilityLabel("\(granted ? "管理" : "授权")\(permission.title)")
-                    }
-                    .help(permission.purpose)
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshPermissions()
-        }
-        .onAppear {
-            refreshPermissions()
-            do {
-                let credentials = try CloudCredentials.load()
-                hasCredentials = credentials != nil
-                accessKey = credentials?.accessKey ?? ""
-                secretKey = credentials?.secretKey ?? ""
-            } catch {
-                status = error.localizedDescription
-            }
-        }
-        .background {
-            if isVolcengineEnabled {
-                Color.clear.task(id: usageRefreshID) { await refreshTranslationUsage() }
-            }
-        }
-    }
-
-    private var translationUsageRing: some View {
-        ZStack {
-            Circle().strokeBorder(Color.primary.opacity(0.16), lineWidth: 3.5)
-            if let usage = usageState.usage {
-                Circle()
-                    .inset(by: 1.75)
-                    .trim(from: 0, to: usage.fractionUsed)
-                    .stroke(.white, lineWidth: 2.5)
-                    .rotationEffect(.degrees(-90))
-            }
-        }
-        .frame(width: 16, height: 16)
-        .frame(width: Self.usageHoverWidth, height: 22)
-        .contentShape(Rectangle())
-        .onHover { isUsageHovered = $0 }
-        .onDisappear { isUsageHovered = false }
-        .overlay(alignment: .trailing) {
-            if isUsageHovered {
-                Group {
-                    if case .loading = usageState {
-                        UsageLoadingDots()
-                    } else {
-                        Text(usageState.detail)
-                            .font(.caption)
-                            .lineLimit(2)
-                            .frame(maxWidth: 240, alignment: .leading)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .fixedSize()
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(.separator) }
-                .offset(x: -(Self.usageHoverWidth + 6))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("机器翻译月用量")
-        .accessibilityValue(usageState.detail)
-    }
-
-    private func refreshTranslationUsage() async {
-        guard isVolcengineEnabled, !Task.isCancelled else { return }
-        let refreshID = usageRefreshID
-        let now = Date.now
-        var cached: TranslationUsage?
-        do {
-            guard let credentials = try CloudCredentials.load() else {
-                usageState = .missingCredentials
-                return
-            }
-            cached = usageCache.usage(for: credentials.accessKey, at: now)
-            usageState = .loading(cached)
-            let usage = try await Volcengine.translationUsage(credentials: credentials, now: now)
-            guard !Task.isCancelled, isVolcengineEnabled, refreshID == usageRefreshID else { return }
-            usageCache.store(usage, for: credentials.accessKey, at: now)
-            usageState = .loaded(usage)
-        } catch {
-            guard !Task.isCancelled, isVolcengineEnabled, refreshID == usageRefreshID else { return }
-            usageState = .failed(cached, error.localizedDescription)
-        }
-    }
-
-    private func refreshPermissions() {
-        grantedPermissions = Set(AppPermission.allCases.filter(\.isGranted))
-    }
-
-    private func billingLink(_ label: String, destination: URL) -> some View {
-        Link(destination: destination) {
-            Text("开通与计费")
-                .font(.caption)
-                .underline()
-                .foregroundStyle(Color.accentColor)
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel(label)
-    }
-
-    private func credentialField(_ title: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            HStack(spacing: 7) {
-                TextField("", text: text)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 150)
-                    .accessibilityLabel(title)
-                Button {
-                    guard let pasted = Clipboard.credentialText() else {
-                        status = "剪贴板中没有可粘贴的文字。"
-                        return
-                    }
-                    text.wrappedValue = pasted
-                    status = ""
-                } label: {
-                    LucideIcon(name: "clipboard-paste", size: 13)
-                }
-                .buttonStyle(.borderless)
-                .help("粘贴 \(title)")
-                .accessibilityLabel("粘贴 \(title)")
-            }
-        }
-    }
-
-    private func saveCredentials() {
-        let access = accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let secret = secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !access.isEmpty, !secret.isEmpty else { return }
-        do {
-            try CloudCredentials(accessKey: access, secretKey: secret).save()
-            accessKey = access
-            secretKey = secret
-            hasCredentials = true
-            status = "密钥已保存在本机。"
-            if isVolcengineEnabled { usageRefreshID += 1 }
-        } catch {
-            status = error.localizedDescription
-        }
-    }
-
-    private func removeCredentials() {
-        do {
-            try CloudCredentials.remove()
-            accessKey = ""
-            secretKey = ""
-            hasCredentials = false
-            status = "密钥已移除。"
-            usageCache.clear()
-            if isVolcengineEnabled {
-                usageState = .missingCredentials
-                usageRefreshID += 1
-            }
-        } catch {
-            status = error.localizedDescription
-        }
-    }
-}
-
-private struct UsageLoadingDots: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 0.18, paused: reduceMotion)) { context in
-            let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.18) % 3
-            HStack(spacing: 4) {
-                ForEach(0..<3) { index in
-                    Circle().fill(.secondary)
-                        .frame(width: 4, height: 4)
-                        .opacity(reduceMotion || index == phase ? 1 : 0.35)
-                }
             }
         }
     }

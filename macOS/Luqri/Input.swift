@@ -345,7 +345,6 @@ private struct SelectionQuery {
     mutating func read(at point: CGPoint) -> String? {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, Self.messageTimeout)
-        let system = AXUIElementCreateSystemWide()
         let focus = element(app, kAXFocusedUIElementAttribute)
         if let focus {
             guard !isSecure(focus) else { return nil }
@@ -353,6 +352,8 @@ private struct SelectionQuery {
             if let text = textSelection(in: focus) { return text }
         }
 
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, Self.messageTimeout)
         let systemFocus = element(system, kAXFocusedUIElementAttribute)
         if let systemFocus, visited.insert(systemFocus).inserted {
             guard !isSecure(systemFocus) else { return nil }
@@ -367,7 +368,9 @@ private struct SelectionQuery {
 
         // Probe the hit path and focus path together, so an unrelated focus chain
         // cannot use the whole time available for reading the pointer's selection.
-        var parents = [hit, focus, systemFocus].compactMap { $0 }.map { element($0, kAXParentAttribute) }
+        var paths = Set<AXUIElement>()
+        let anchors = [hit, focus, systemFocus].compactMap { $0 }.filter { paths.insert($0).inserted }
+        var parents = anchors.map { element($0, kAXParentAttribute) }
         for _ in 0..<10 {
             guard canQuery, parents.contains(where: { $0 != nil }) else { break }
             for index in parents.indices {
@@ -382,7 +385,8 @@ private struct SelectionQuery {
 
         let window = element(app, kAXFocusedWindowAttribute)
         if let window, let text = probe(element(window, kAXFocusedUIElementAttribute)) ?? probe(window) { return text }
-        for anchor in [focus, systemFocus, hit].compactMap({ $0 }) {
+        paths.removeAll(keepingCapacity: true)
+        for anchor in [focus, systemFocus, hit].compactMap({ $0 }) where paths.insert(anchor).inserted {
             for peer in elements(anchor, kAXSharedTextUIElementsAttribute, limit: 6) {
                 if let text = probe(peer) { return text }
             }
@@ -637,6 +641,14 @@ enum Clipboard {
         guard let text = credentialText(from: pasteboard) else { return false }
         editor.insertText(text, replacementRange: editor.selectedRange())
         return true
+    }
+
+    static func writeCredential(_ text: String) -> Bool {
+        let item = NSPasteboardItem()
+        guard item.setString(text, forType: .string), item.setData(Data(), forType: concealed) else { return false }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item])
     }
 
     static func write(_ text: String) {

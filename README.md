@@ -34,7 +34,7 @@ Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或�
 - **截图 OCR**。框选屏幕区域，识别文字并复制到剪贴板。
 - **截图翻译**。框选后在浮窗中同时显示识别出的原文和译文。
 - **快捷键与朗读**。三组全局快捷键均可自定义，支持使用系统语音朗读中英文。
-- **云端用量**。在设置中查看火山引擎机器翻译当月的已入账用量。
+- **云端用量**。在设置中查看翻译和 OCR 用量。
 
 ## 截图
 
@@ -81,14 +81,14 @@ Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或�
 
 ### 配置火山引擎
 
-macOS 默认使用 Apple 翻译和 Apple Vision，可直接使用。Windows 的文本翻译和截图识别使用火山引擎，需要先配置密钥。
+macOS 默认使用 Apple 翻译和 Apple Vision，可直接使用。Windows 默认使用火山引擎，需要先配置密钥。两端也可接入阿里云。 [macOS 阿里云配置](macOS/README.md#阿里云) · [Windows 阿里云配置](Windows/README.md#阿里云)
 
 1. 在火山引擎按需开通文本翻译、多语种 OCR，或同时开通两项。 [机器翻译开通与计费](https://docs.volcengine.com/docs/machine-translation/product-billing) · [多语种 OCR](https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1)
 2. 在火山引擎访问控制控制台中进入「资源管理 → 密钥管理」，创建访问密钥并获取 `Access Key ID` 和 `Secret Access Key`。所用账号需要有权调用已开通的服务。 [访问控制控制台](https://console.volcengine.com/iam) · [获取访问密钥](https://docs.volcengine.com/docs/cp/signature-mechanism?lang=zh)
-3. 打开 Luqri 设置，在「火山引擎」中填写两个字段并点击「保存密钥」。使用云端翻译时勾选火山引擎翻译。macOS 使用云端截图识别时，在「OCR 服务」中选择火山引擎。Windows 的截图识别使用火山引擎多语种 OCR。
-4. 如果需要查看当月的翻译字符用量，为所用密钥授予费用中心 `ListBillDetail` 的调用权限。悬停在设置里的用量环上可查看已用量和本月免费额度。 [账单管理 API](https://docs.volcengine.com/docs/billing-center/openapi-interface-list?lang=zh)
+3. 打开 Luqri 设置，在「访问密钥」中选择火山引擎，填写两个字段并点击「保存密钥」。使用火山引擎翻译时勾选对应选项，使用火山引擎截图识别时在「OCR 服务」中选择火山引擎。
+4. 使用火山引擎翻译需要为所用密钥授予费用中心 `ListBillDetail` 的调用权限，以便在发送翻译请求前检查月用量。悬停在设置里的用量环上可查看已用量和本月免费额度。 [账单管理 API](https://docs.volcengine.com/docs/billing-center/openapi-interface-list?lang=zh)
 
-云端翻译会向火山引擎发送待译文字，云端 OCR 会发送框选的截图。截图翻译会将识别结果交给已启用的翻译服务。
+云端翻译会向所选服务发送待译文字，云端 OCR 会发送框选的截图。截图翻译会将识别结果交给已启用的翻译服务。
 
 在设置中可指定原文和译文语言。译文设为「自动选择」时，中文原文译为英语，其余原文译为简体中文。
 
@@ -111,8 +111,8 @@ Windows/
 
 | 平台 | 界面与系统集成 | 翻译、识别与朗读 |
 | --- | --- | --- |
-| macOS | Swift、SwiftUI、AppKit、ScreenCaptureKit | Apple Translation、Vision、AVFoundation、火山引擎 API |
-| Windows | C#、.NET 10、WPF、Win32、Windows UI Automation | 火山引擎 API、System.Speech |
+| macOS | Swift、SwiftUI、AppKit、ScreenCaptureKit | Apple Translation、Vision、AVFoundation、火山引擎和阿里云 API |
+| Windows | C#、.NET 10、WPF、Win32、Windows UI Automation | 火山引擎和阿里云 API、System.Speech |
 
 ## 平台
 

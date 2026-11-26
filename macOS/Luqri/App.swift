@@ -43,13 +43,13 @@ enum LuqriApp {
 }
 
 @MainActor
-final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
+final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation {
     private let model = TranslationModel()
-    private let translationUsageCache = TranslationUsageCache()
     private let screenshotCapture = ScreenshotCapture()
     private var statusItem: NSStatusItem?
     private var shortcuts: GlobalShortcuts?
     private var applicationKeyMonitor: Any?
+    private var ocrUsageTracking: Task<Void, Never>?
     private var translationPanel: UtilityPanel?
     private var translationHasTakenFocus = false
     private var translationPinned = false
@@ -72,6 +72,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         applicationKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             return self.handleApplicationKey(event)
+        }
+        scheduleOCRUsageTracking()
+    }
+
+    private func scheduleOCRUsageTracking() {
+        ocrUsageTracking?.cancel()
+        ocrUsageTracking = nil
+        guard let credentials = try? CloudAccount.volcengine.load() else { return }
+        ocrUsageTracking = Task(priority: .utility) {
+            let clock = ContinuousClock()
+            while !Task.isCancelled {
+                _ = try? await VolcengineOCR.usage.read(credentials)
+                try? await clock.sleep(for: .seconds(3_600), tolerance: .seconds(60))
+            }
         }
     }
 
@@ -117,6 +131,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ocrUsageTracking?.cancel()
         shortcuts?.uninstall()
         if let applicationKeyMonitor { NSEvent.removeMonitor(applicationKeyMonitor) }
     }
@@ -154,6 +169,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         item.button?.setAccessibilityLabel("Luqri")
         let menu = NSMenu()
         menu.autoenablesItems = false
+        menu.delegate = self
         for command in Command.allCases {
             addItem(command.title, icon: command.icon, action: #selector(runCommand(_:)), to: menu) { entry in
                 entry.tag = Int(command.rawValue)
@@ -168,6 +184,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         item.menu = menu
         statusItem = item
         refreshMenuShortcuts()
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        for item in menu.items {
+            guard let icon = item.representedObject as? String else { continue }
+            item.image = LucideIcon.menuImage(icon, size: 15)
+            item.representedObject = nil
+        }
+        menu.delegate = nil
     }
 
     private func refreshMenuShortcuts() {
@@ -253,7 +278,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         configure: (NSMenuItem) -> Void = { _ in }
     ) {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.image = LucideIcon.menuImage(icon, size: 15)
+        item.representedObject = icon
         item.target = self
         configure(item)
         menu.addItem(item)
@@ -397,7 +422,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panel.onEscape = { [weak self] in self?.closeTranslation() }
         panel.onEditorReturn = { [weak model] in
             guard let model, !model.enabledProviders.isEmpty,
-                  model.text.hasNonWhitespace else { return false }
+                  model.hasText else { return false }
             model.translate()
             return true
         }
@@ -464,7 +489,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         translationPanel = nil
         translationHasTakenFocus = false
         translationPinned = false
-        panel?.orderOut(nil)
+        panel?.delegate = nil
+        panel?.close()
         panel?.contentViewController = nil
         model.reset()
     }
@@ -493,7 +519,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             window = settingsWindow
         } else {
             let controller = NSHostingController(rootView: SettingsView(
-                model: model, shortcuts: shortcuts, usageCache: translationUsageCache
+                model: model, shortcuts: shortcuts, credentialsChanged: { [weak self] account in
+                    if account == .volcengine { self?.scheduleOCRUsageTracking() }
+                }
             ) { [weak self] permission in
                 self?.showPermissionPrompt(permission)
             })
@@ -582,6 +610,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panel.isOpaque = false
         panel.hasShadow = true
         panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
@@ -599,7 +628,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private func clearFeedback() {
         feedbackTask?.cancel()
         feedbackTask = nil
-        feedbackPanel?.orderOut(nil)
+        feedbackPanel?.close()
         feedbackPanel?.contentView = nil
         feedbackPanel = nil
     }

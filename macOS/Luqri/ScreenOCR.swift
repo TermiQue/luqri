@@ -2,7 +2,7 @@ import Foundation
 import Vision
 
 enum OCRProvider: String, CaseIterable, Identifiable {
-    case appleVision, volcengine
+    case appleVision, volcengine, aliyun
 
     static let preferenceKey = "ocrProvider"
     var id: Self { self }
@@ -11,11 +11,20 @@ enum OCRProvider: String, CaseIterable, Identifiable {
         switch self {
         case .appleVision: "Apple Vision（本机）"
         case .volcengine: "火山引擎多语种 OCR"
+        case .aliyun: "阿里云 OCR 统一识别"
+        }
+    }
+
+    var meter: CloudMeter? {
+        switch self {
+        case .appleVision: nil
+        case .volcengine: .volcengineOCR
+        case .aliyun: .aliyunOCR
         }
     }
 
     var maximumCaptureDimension: Int? {
-        self == .volcengine ? VolcengineOCR.maximumImageDimension : nil
+        meter == nil ? nil : CloudOCRImage.maximumDimension
     }
 
     static func selected(in defaults: UserDefaults = .standard) -> Self {
@@ -26,6 +35,7 @@ enum OCRProvider: String, CaseIterable, Identifiable {
         switch self {
         case .appleVision: try await ScreenOCR.recognize(consume image)
         case .volcengine: try await VolcengineOCR.recognize(consume image)
+        case .aliyun: try await Aliyun.recognize(consume image)
         }
     }
 }
