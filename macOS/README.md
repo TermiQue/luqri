@@ -54,10 +54,20 @@ Luqri 支持 macOS 15.0 及以上版本，可在 Apple Silicon 和 Intel Mac 上
 
 ## 服务与数据
 
-- **Apple 翻译**默认开启。首次使用某个语种时，系统可能提示下载语言包，下载后可离线翻译。
-- **火山引擎机器翻译**可与 Apple 翻译同时开启，结果各自显示。启用后，打开设置会刷新火山引擎的本月用量。悬停在用量环上可查看已用量和月免费额度。 [火山引擎通用配置](../README.md#配置火山引擎)
-- **OCR 服务**单选。默认使用 Apple Vision 在本机识别，也可在设置中切换为火山引擎多语种 OCR。
-- **火山引擎密钥**两个字段均支持 `⌘V`。密钥存放在本机的 `~/Library/Application Support/Luqri/volcengine.json`，文件权限为 `0600`，可通过设置中的「移除密钥」删除。
+- **Apple 翻译**默认开启。首次使用某个语种时，系统可能提示下载语言包，下载后可离线翻译。可同时启用 Apple 翻译、火山引擎和阿里云，浮窗为每个服务分别显示译文。
+- **OCR 服务**默认使用 Apple Vision 在本机识别。截图 OCR 和截图翻译共用此设置，也可选择火山引擎多语种 OCR 或阿里云 OCR 统一识别。云端 OCR 会发送框选的图像，云端翻译会发送待译文字。
+- **访问密钥**按服务商单独保存。字段支持粘贴和复制，切换服务商会保留本次设置窗口中未保存的输入。保存的密钥位于 `~/Library/Application Support/Luqri/` 下的 `volcengine.json` 和 `aliyun.json`，文件权限为 `0600`。
+- 设置中的用量环显示用量及应用采用的额度。火山引擎翻译、阿里云翻译和阿里云 OCR 按 UTC+8 自然月统计。达到额度、预计本次请求会超额或无法核验月用量时，应用会跳过对应请求。云端报表可能延迟，本机也记录已发出的请求。
+
+### 火山引擎
+
+- 在「访问密钥」选择火山引擎并保存密钥。翻译用量需要 `ListBillDetail` 权限，按每月 200 万字符核算。 [火山引擎配置](../README.md#配置火山引擎)
+- 火山引擎 OCR 按 5,000 次累计用量检查。从首次启用用量统计的月份起记录，应用启动时和运行期间每小时通过操作审计 `LookupEvents` 合并近期可查到的调用。审计不可用时，用量环会标明当前仅显示已记录的用量。 [火山引擎操作审计](https://docs.volcengine.com/docs/operations-audit/lookup-events-query-the-list-of-audit-events?lang=zh)
+
+### 阿里云
+
+- 开通「机器翻译通用版」和「OCR 统一识别」中需要使用的服务。在「访问密钥」选择阿里云并保存 AccessKey。RAM 用户需有对应的 `alimt:TranslateGeneral` 或 `ocr:RecognizeAllText` 权限。 [机器翻译通用版](https://help.aliyun.com/zh/machine-translation/product-overview/pricing-of-machine-translation-general-purpose-edition) · [文字识别控制台](https://ocr.console.aliyun.com/overview)
+- 翻译用量需要 `alimt:GetTranslateReport` 权限，按每月 100 万字符核算。OCR 用量需要 `actiontrail:LookupEvents` 权限，按每月 200 次核算。用量环以阿里云报表、可查到的审计事件及本机记录估算用量，实际余额以阿里云控制台为准。 [翻译用量报表](https://help.aliyun.com/zh/machine-translation/developer-reference/api-alimt-2018-10-12-gettranslatereport) · [操作审计](https://help.aliyun.com/en/actiontrail/developer-reference/api-actiontrail-2020-07-06-lookupevents)
 
 ## 构建
 

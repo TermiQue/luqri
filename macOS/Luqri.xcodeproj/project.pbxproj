@@ -19,6 +19,11 @@
 		1A2B3C4D00000000000000D2 /* LuqriAppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D000000000000006F /* LuqriAppIcon.icns */; };
 		1A2B3C4D00000000000000D3 /* SpeechPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000070 /* SpeechPlayback.swift */; };
 		1A2B3C4D00000000000000D4 /* Permissions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000071 /* Permissions.swift */; };
+		1A2B3C4D00000000000000D5 /* Aliyun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000072 /* Aliyun.swift */; };
+		1A2B3C4D00000000000000D6 /* CloudUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000073 /* CloudUsage.swift */; };
+		1A2B3C4D00000000000000D7 /* CloudServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000074 /* CloudServices.swift */; };
+		1A2B3C4D00000000000000D8 /* CloudOCRImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000075 /* CloudOCRImage.swift */; };
+		1A2B3C4D00000000000000D9 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000076 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +42,12 @@
 		1A2B3C4D0000000000000070 /* SpeechPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechPlayback.swift; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000071 /* Permissions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Permissions.swift; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000005 /* Luqri.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Luqri.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A2B3C4D0000000000000072 /* Aliyun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Aliyun.swift; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000073 /* CloudUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudUsage.swift; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000074 /* CloudServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudServices.swift; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000075 /* CloudOCRImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudOCRImage.swift; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000076 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000077 /* Build.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Build.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,7 +62,7 @@
 /* Begin PBXGroup section */
 		1A2B3C4D0000000000000002 = {
 			isa = PBXGroup;
-			children = (1A2B3C4D0000000000000003 /* Luqri */, 1A2B3C4D0000000000000004 /* Products */, );
+			children = (1A2B3C4D0000000000000077 /* Build.xcconfig */, 1A2B3C4D0000000000000003 /* Luqri */, 1A2B3C4D0000000000000004 /* Products */, );
 			sourceTree = "<group>";
 		};
 		1A2B3C4D0000000000000003 /* Luqri */ = {
@@ -67,6 +78,11 @@
 				1A2B3C4D0000000000000067 /* TranslationModel.swift */,
 				1A2B3C4D0000000000000068 /* Views.swift */,
 				1A2B3C4D0000000000000069 /* Volcengine.swift */,
+				1A2B3C4D0000000000000072 /* Aliyun.swift */,
+				1A2B3C4D0000000000000073 /* CloudUsage.swift */,
+				1A2B3C4D0000000000000074 /* CloudServices.swift */,
+				1A2B3C4D0000000000000075 /* CloudOCRImage.swift */,
+				1A2B3C4D0000000000000076 /* SettingsView.swift */,
 				1A2B3C4D000000000000006A /* Icons */,
 				1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */,
 				1A2B3C4D000000000000006C /* Info.plist */,
@@ -144,6 +160,11 @@
 				1A2B3C4D00000000000000CB /* TranslationModel.swift in Sources */,
 				1A2B3C4D00000000000000CC /* Views.swift in Sources */,
 				1A2B3C4D00000000000000CD /* Volcengine.swift in Sources */,
+				1A2B3C4D00000000000000D6 /* CloudUsage.swift in Sources */,
+				1A2B3C4D00000000000000D5 /* Aliyun.swift in Sources */,
+				1A2B3C4D00000000000000D9 /* SettingsView.swift in Sources */,
+				1A2B3C4D00000000000000D8 /* CloudOCRImage.swift in Sources */,
+				1A2B3C4D00000000000000D7 /* CloudServices.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -152,10 +173,10 @@
 /* Begin XCBuildConfiguration section */
 		1A2B3C4D000000000000000C /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1A2B3C4D0000000000000077 /* Build.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -166,10 +187,10 @@
 		};
 		1A2B3C4D000000000000000D /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1A2B3C4D0000000000000077 /* Build.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
@@ -182,11 +203,8 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Luqri/Info.plist;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.termique.luqri;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -196,11 +214,8 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Luqri/Info.plist;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.termique.luqri;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;

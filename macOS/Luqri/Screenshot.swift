@@ -185,6 +185,7 @@ private final class SelectionOverlay {
             panel.isOpaque = false
             panel.hasShadow = false
             panel.animationBehavior = .none
+            panel.isReleasedWhenClosed = false
             panel.onEscape = { [weak self] in self?.cancel() }
             panel.contentView = SelectionView(
                 frame: CGRect(origin: .zero, size: frame.size),
@@ -219,7 +220,10 @@ private final class SelectionOverlay {
         activationTask = nil
         let callback = completion
         completion = nil
-        for window in windows { window.orderOut(nil) }
+        for window in windows {
+            window.close()
+            window.contentView = nil
+        }
         windows.removeAll()
         if hasSelectionCursor {
             NSCursor.pop()

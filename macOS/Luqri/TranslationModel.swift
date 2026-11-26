@@ -4,13 +4,22 @@ import Observation
 import Translation
 
 enum Provider: String, CaseIterable, Identifiable {
-    case apple, volcengine
+    case apple, volcengine, aliyun
 
     var id: Self { self }
+    var meter: CloudMeter? {
+        switch self {
+        case .apple: nil
+        case .volcengine: .volcengineTranslation
+        case .aliyun: .aliyunTranslation
+        }
+    }
+
     var title: String {
         switch self {
         case .apple: "Apple 翻译"
         case .volcengine: "火山引擎"
+        case .aliyun: "阿里云"
         }
     }
 }
@@ -55,7 +64,7 @@ enum Language: String, CaseIterable, Identifiable {
     var isChinese: Bool { self == .simplifiedChinese || self == .traditionalChinese }
 }
 
-struct TranslationJob {
+struct TranslationJob: Sendable {
     let id = UUID()
     let text: String
     let provider: Provider
@@ -81,6 +90,7 @@ final class TranslationModel {
     private let defaults: UserDefaults
 
     private(set) var text = ""
+    private(set) var hasText = false
     var source: Language? {
         didSet { if source != oldValue { changeLanguages() } }
     }
@@ -93,7 +103,7 @@ final class TranslationModel {
     private var activeJobs: [Provider: TranslationJob] = [:]
     private var inputStatus = InputStatus.idle
     @ObservationIgnored private var inputTask: Task<Void, Never>?
-    @ObservationIgnored private var cloudTask: Task<Void, Never>?
+    @ObservationIgnored private var cloudTasks: [Provider: Task<Void, Never>] = [:]
 
     var enabledProviders: [Provider] { Provider.allCases.filter(selectedProviders.contains) }
     var isLoadingInput: Bool { inputStatus == .loading }
@@ -123,10 +133,7 @@ final class TranslationModel {
             selectedProviders.remove(provider)
             activeJobs[provider] = nil
             outputs[provider] = nil
-            if provider == .volcengine {
-                cloudTask?.cancel()
-                cloudTask = nil
-            }
+            cloudTasks.removeValue(forKey: provider)?.cancel()
         }
         defaults.set(enabledProviders.map(\.rawValue), forKey: "enabledTranslationProviders")
     }
@@ -163,22 +170,26 @@ final class TranslationModel {
     func translate() {
         guard !selectedProviders.isEmpty,
               !isTranslating || !selectedProviders.allSatisfy({ outputs[$0] != nil }) else { return }
-        let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty else { return }
+        guard hasText, let range = CloudText.trimmedRange(in: text[...]) else { return }
+        let input = range == text.startIndex..<text.endIndex ? text : String(text[range])
         clearResults()
         let destination = target ?? automaticTarget(for: input)
         for provider in enabledProviders {
             let job = TranslationJob(text: input, provider: provider, source: source, target: destination)
             activeJobs[provider] = job
             outputs[provider] = .translating
-            if provider == .volcengine {
-                cloudTask = Task { [weak self] in
-                    do {
-                        let translation = try await Volcengine.translate(job)
-                        self?.finish(job, with: .success(translation))
-                    } catch {
-                        self?.finish(job, with: .failure(error))
-                    }
+            let translate: @Sendable (TranslationJob) async throws -> String
+            switch provider {
+            case .apple: continue
+            case .volcengine: translate = Volcengine.translate
+            case .aliyun: translate = Aliyun.translate
+            }
+            cloudTasks[provider] = Task { [weak self] in
+                do {
+                    let translation = try await translate(job)
+                    self?.finish(job, with: .success(translation))
+                } catch {
+                    self?.finish(job, with: .failure(error))
                 }
             }
         }
@@ -201,6 +212,8 @@ final class TranslationModel {
         cancelInputLoad()
         clearResults()
         text = input
+        let nonWhitespace = input.hasNonWhitespace
+        if hasText != nonWhitespace { hasText = nonWhitespace }
     }
 
     func reset() {
@@ -235,15 +248,15 @@ final class TranslationModel {
     private func clearResults() {
         guard !outputs.isEmpty else { return }
         activeJobs.removeAll()
-        cloudTask?.cancel()
-        cloudTask = nil
+        for task in cloudTasks.values { task.cancel() }
+        cloudTasks.removeAll()
         outputs.removeAll()
     }
 
     private func finish(_ job: TranslationJob, with outcome: Result<String, any Error>) {
         guard activeJobs[job.provider]?.id == job.id else { return }
         activeJobs[job.provider] = nil
-        if job.provider == .volcengine { cloudTask = nil }
+        cloudTasks[job.provider] = nil
         switch outcome {
         case .success(let translation):
             outputs[job.provider] = .translated(translation, language: job.target)
