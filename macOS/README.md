@@ -6,15 +6,15 @@ Luqri 是 macOS 原生的菜单栏翻译与文字识别工具，支持划词翻�
 
 ### 翻译浮窗
 
-![Luqri 翻译浮窗](README.assets/translate.png)
-
-### 截图 OCR
-
-![Luqri 截图 OCR](README.assets/ocr.png)
+<img src="README.assets/translate.png" alt="翻译浮窗显示火山引擎和阿里云的译文" width="532">
 
 ### 设置
 
-![Luqri 设置窗口](README.assets/setting.png)
+<img src="README.assets/setting.png" alt="设置窗口中的翻译服务、OCR 服务和访问密钥" width="578">
+
+### 截图 OCR
+
+<img src="README.assets/ocr.png" alt="截图 OCR 在 GitHub 页面中框选文字" width="880">
 
 ## 安装
 
