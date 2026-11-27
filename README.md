@@ -28,37 +28,20 @@ Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或�
 ## 功能特性
 
 - **划词翻译：** 选中文字后直接查看译文，也可在浮窗中输入或粘贴原文。
+
+  ![macOS 划词翻译演示：拖动鼠标选中英文，按下 ⌥D，浮窗先显示加载状态，再显示中文译文](README.assets/selection-translation.webp)
+
 - **截图 OCR：** 框选屏幕区域，识别文字并复制到剪贴板。
+
+  ![macOS 截图复制演示：按下 ⌥W 后框选文档中的英文，再按 ⌘V 将识别出的文字粘贴到 Note 窗口](README.assets/screenshot-copy.webp)
+
 - **截图翻译：** 框选后在浮窗中同时显示识别出的原文和译文。
+
+  ![macOS 截图翻译演示：按下 ⌥S 后框选文档中的英文，浮窗依次显示识别和翻译进度，最后显示中文译文](README.assets/screenshot-translation.webp)
+
 - **云端用量：** 在设置中查看翻译和 OCR 用量。
 
-## 截图
-
-<table>
-  <thead>
-    <tr>
-      <th scope="col" width="50%">macOS</th>
-      <th scope="col" width="50%">Windows</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><th colspan="2">翻译框</th></tr>
-    <tr>
-      <td align="center" valign="top"><img src="README.assets/macos-translate.png" alt="macOS 翻译浮窗显示火山引擎和阿里云的译文" width="420"></td>
-      <td align="center" valign="top"><img src="README.assets/windows-translate.png" alt="Windows 翻译框" width="420"></td>
-    </tr>
-    <tr><th colspan="2">设置</th></tr>
-    <tr>
-      <td align="center" valign="top"><img src="README.assets/macos-setting.png" alt="macOS 设置窗口中的翻译服务、OCR 服务和访问密钥" width="420"></td>
-      <td align="center" valign="top"><img src="README.assets/windows-setting.png" alt="Windows 设置窗口" width="420"></td>
-    </tr>
-    <tr><th colspan="2">截图</th></tr>
-    <tr>
-      <td align="center" valign="top"><img src="README.assets/macos-ocr.png" alt="macOS 截图 OCR 在 GitHub 页面中框选文字" width="420"></td>
-      <td align="center" valign="top"><img src="README.assets/windows-ocr.png" alt="Windows 截图 OCR 框选界面" width="420"></td>
-    </tr>
-  </tbody>
-</table>
+  ![macOS 云端用量演示，指针依次悬停在翻译和 OCR 的用量环上，显示用量和额度](README.assets/cloud-usage.webp)
 
 ## 快速开始
 
