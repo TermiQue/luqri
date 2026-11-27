@@ -14,7 +14,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2f745f?style=flat-square" alt="许可证：MIT"></a>
   <a href="#平台"><img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-426b80?style=flat-square" alt="平台：macOS 和 Windows"></a>
-  <a href="https://github.com/TermiQue/luqri/releases"><img src="https://img.shields.io/github/v/release/TermiQue/luqri?style=flat-square" alt="最新版本"></a>
+  <a href="https://github.com/TermiQue/luqri/releases/latest"><img src="README.assets/release.svg" alt="最新版本 v1.0.1"></a>
 </p>
 
 ---
