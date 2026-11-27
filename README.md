@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="README.assets/macOS/cover.webp" alt="清澈海水下的珊瑚礁" width="100%">
+  <img src="README.assets/cover.webp" alt="清澈海水下的珊瑚礁" width="100%">
 </p>
 
 <p align="center">
-  <img src="README.assets/macOS/icon.png" alt="Luqri 图标" width="88" height="88">
+  <img src="README.assets/icon.png" alt="Luqri 图标" width="88" height="88">
 </p>
 
 <h1 align="center">Luqri</h1>
@@ -44,18 +44,18 @@ Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或�
   <tbody>
     <tr><th colspan="2">翻译框</th></tr>
     <tr>
-      <td align="center" valign="top"><img src="README.assets/macOS/translate.png" alt="macOS 翻译浮窗显示火山引擎和阿里云的译文" width="420"></td>
-      <td align="center" valign="top"><img src="README.assets/Windows/translate.png" alt="Windows 翻译框" width="420"></td>
+      <td align="center" valign="top"><img src="README.assets/macos-translate.png" alt="macOS 翻译浮窗显示火山引擎和阿里云的译文" width="420"></td>
+      <td align="center" valign="top"><img src="README.assets/windows-translate.png" alt="Windows 翻译框" width="420"></td>
     </tr>
     <tr><th colspan="2">设置</th></tr>
     <tr>
-      <td align="center" valign="top"><img src="README.assets/macOS/setting.png" alt="macOS 设置窗口中的翻译服务、OCR 服务和访问密钥" width="420"></td>
-      <td align="center" valign="top"><img src="README.assets/Windows/setting.png" alt="Windows 设置窗口" width="420"></td>
+      <td align="center" valign="top"><img src="README.assets/macos-setting.png" alt="macOS 设置窗口中的翻译服务、OCR 服务和访问密钥" width="420"></td>
+      <td align="center" valign="top"><img src="README.assets/windows-setting.png" alt="Windows 设置窗口" width="420"></td>
     </tr>
     <tr><th colspan="2">截图</th></tr>
     <tr>
-      <td align="center" valign="top"><img src="README.assets/macOS/ocr.png" alt="macOS 截图 OCR 在 GitHub 页面中框选文字" width="420"></td>
-      <td align="center" valign="top"><img src="README.assets/Windows/ocr.png" alt="Windows 截图 OCR 框选界面" width="420"></td>
+      <td align="center" valign="top"><img src="README.assets/macos-ocr.png" alt="macOS 截图 OCR 在 GitHub 页面中框选文字" width="420"></td>
+      <td align="center" valign="top"><img src="README.assets/windows-ocr.png" alt="Windows 截图 OCR 框选界面" width="420"></td>
     </tr>
   </tbody>
 </table>
