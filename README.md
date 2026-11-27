@@ -11,7 +11,7 @@
 <p align="center">一款轻量级原生多平台识别翻译工具</p>
 
 <p align="center">
-  <a href="macOS/README.md">macOS 文档</a> · <a href="Windows/README.md">Windows 文档</a>
+  <a href="#下载安装">下载安装</a> · <a href="#服务供应商">服务配置</a> · <a href="#开发">开发</a>
 </p>
 
 <p align="center">
@@ -69,8 +69,8 @@ Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或�
 
 从 [GitHub Releases](https://github.com/TermiQue/luqri/releases) 下载对应的安装包。
 
-- **macOS**。打开通用版 DMG，将 Luqri 拖入「应用程序」并启动。首次使用划词或截图时，按提示授予对应权限。[macOS 具体说明](macOS/README.md)
-- **Windows**。按处理器架构运行 `Luqri-Setup-x64.exe` 或 `Luqri-Setup-arm64.exe`。[Windows 具体说明](Windows/README.md)
+- **macOS**。打开通用 DMG，将 Luqri 拖入「应用程序」后启动。设置可从菜单栏打开。首次使用划词时，在「隐私与安全」授予「设备控制和数据访问」或「辅助功能」权限。截图则使用「录屏与系统录音」列表。`-adhoc.dmg` 为临时签名的本地测试包。
+- **Windows**。按处理器架构选择 x64 或 ARM64 安装包。安装包自带 .NET 桌面运行时。启动后左键点击通知区域的 Luqri 图标即可打开设置。
 
 | 操作 | macOS | Windows |
 | --- | --- | --- |
@@ -78,9 +78,11 @@ Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或�
 | 截图 OCR | `⌥W` | `Alt+W` |
 | 截图翻译 | `⌥S` | `Alt+S` |
 
+三个全局快捷键均可在设置中修改。macOS 15.0 和 15.1 若无法注册仅含 Option 的组合，可加入 Command 或 Control。 [Apple 开发者论坛说明](https://developer.apple.com/forums/thread/763878)
+
 ### 服务供应商
 
-macOS 默认使用 Apple 翻译和 Apple Vision。如果原生服务的结果不符合预期，可以按下方步骤配置云端服务。
+macOS 默认使用 Apple 翻译和 Apple Vision，Windows 默认使用火山引擎。翻译可同时启用多个服务，OCR 单独选择一个服务。云端翻译会把待译文字发送给所选服务，云端 OCR 会发送框选的截图。
 
 下表列出 Luqri 用于检查云端用量的免费额度。实际免费余额以服务商控制台为准。
 
@@ -113,7 +115,7 @@ macOS 默认使用 Apple 翻译和 Apple Vision。如果原生服务的结果不
 
    ![为火山引擎用户直接添加四项权限策略](README/volcengine-user-permissions.png)
 
-5. 在用户详情的「密钥」页创建并保存访问密钥。回到 Luqri 设置，在「访问密钥」中选择火山引擎并保存密钥。
+5. 在用户详情的「密钥」页创建访问密钥。回到 Luqri 设置，在「访问密钥」中选择火山引擎并保存。翻译用量查询需要 `ListBillDetail` 权限，OCR 累计用量通过 `LookupEvents` 核对。
 
    ![在火山引擎用户详情中创建 Access Key](README/volcengine-user-access-keys.png)
 
@@ -135,7 +137,7 @@ macOS 默认使用 Apple 翻译和 Apple Vision。如果原生服务的结果不
 
    ![填写阿里云 RAM 用户信息并选择 AccessKey 访问](README/aliyun-ram-programmatic-access.png)
 
-4. 赋予权限
+4. 授予翻译 `alimt:TranslateGeneral`、OCR `ocr:RecognizeAllText` 和用量查询所需的 `alimt:GetTranslateReport`、`actiontrail:LookupEvents` 权限。
 
    ![阿里云 RAM 用户的机器翻译、文字识别和操作审计权限策略](README/aliyun-ram-permissions.png)
 
@@ -165,27 +167,33 @@ Windows/
 
 ## 平台
 
-| 平台 | 系统要求与架构 | 文档 |
+| 平台 | 系统要求与架构 | 源码 |
 | --- | --- | --- |
-| macOS | macOS 15.0 及以上 · Apple Silicon、Intel | [macOS 文档](macOS/README.md) |
-| Windows | 支持 .NET 10 的 Windows 系统 · x64、ARM64 | [Windows 文档](Windows/README.md) · [.NET 系统要求](https://learn.microsoft.com/zh-cn/dotnet/core/install/windows) |
+| macOS | macOS 15.0 及以上 · Apple Silicon、Intel | [macOS](macOS/) |
+| Windows | 支持 .NET 10 的 Windows 系统 · x64、ARM64 | [Windows](Windows/) · [.NET 系统要求](https://learn.microsoft.com/zh-cn/dotnet/core/install/windows) |
 
 ## 开发
 
-**macOS** 使用 Xcode 16.3 或更新版本。在仓库根目录运行以下命令，也可在 Xcode 中打开 `macOS/Luqri.xcodeproj`。 [macOS 构建与公证](macOS/README.md#构建)
+**macOS** 使用 Xcode 16.3 或更新版本。可在 Xcode 中打开 `macOS/Luqri.xcodeproj`，也可在仓库根目录运行以下命令。
 
 ```sh
 cd macOS
 ./scripts/build.sh
 open .build/Luqri.app
+./scripts/package.sh --local  # 生成通用 DMG 与 SHA-256 文件
 ```
 
-**Windows** 使用 .NET 10 SDK。构建脚本默认生成 x64 与 ARM64 的自包含版本。打包安装程序还需要 Inno Setup。 [Windows 构建与打包](Windows/README.md#构建)
+正式分发时，设置 `LUQRI_SIGN_IDENTITY` 和 `LUQRI_NOTARY_PROFILE` 后运行 `./scripts/package.sh`，使用 Developer ID 签名并提交 Apple 公证。
+
+**Windows** 使用 .NET 10 SDK。构建脚本默认生成 x64 与 ARM64 的自包含版本。打包安装程序需要 Inno Setup 7.1 或更新版本。
 
 ```powershell
 Set-Location Windows
 .\scripts\build-windows.ps1
+.\scripts\package-windows.ps1
 ```
+
+两端产物分别写入 `macOS/.build/` 和 `Windows/.build/`。
 
 ## 许可证
 
