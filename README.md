@@ -24,17 +24,16 @@
 
 ## 详细介绍
 
-Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或聊天时，选中文字后按快捷键即可打开翻译浮窗。遇到无法直接复制的文字，可以框选屏幕区域，将识别结果复制到剪贴板，或接着翻译。浮窗也支持手动输入和翻译剪贴板内容。
+Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或聊天时，选中文字后按快捷键即可打开翻译浮窗。遇到无法直接复制的文字，可以框选屏幕区域，将识别结果进行翻译或复制到剪贴板。浮窗也支持手动输入和翻译剪贴板内容。
 
 应用平时运行在 macOS 菜单栏或 Windows 托盘中，翻译浮窗和截图界面按需打开。两端沿用相同的操作方式，并使用各自平台的窗口、快捷键和截图接口。
 
 ## 功能特性
 
-- **划词翻译**。选中文字后直接查看译文，也可在浮窗中输入或粘贴原文。
-- **截图 OCR**。框选屏幕区域，识别文字并复制到剪贴板。
-- **截图翻译**。框选后在浮窗中同时显示识别出的原文和译文。
-- **快捷键与朗读**。三组全局快捷键均可自定义，支持使用系统语音朗读中英文。
-- **云端用量**。在设置中查看翻译和 OCR 用量。
+- **划词翻译：**选中文字后直接查看译文，也可在浮窗中输入或粘贴原文。
+- **截图 OCR：**框选屏幕区域，识别文字并复制到剪贴板。
+- **截图翻译：**框选后在浮窗中同时显示识别出的原文和译文。
+- **云端用量：**在设置中查看翻译和 OCR 用量。
 
 ## 截图
 
@@ -70,8 +69,8 @@ Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或�
 
 从 [GitHub Releases](https://github.com/TermiQue/luqri/releases) 下载对应的安装包。
 
-- **macOS**。打开通用版 DMG，将 Luqri 拖入「应用程序」并启动。首次使用划词或截图时，按提示授予对应权限。文件名以 `-adhoc.dmg` 结尾的安装包使用临时签名，供本地测试。 [macOS 安装与权限](macOS/README.md)
-- **Windows**。按处理器架构运行 `Luqri-Setup-x64.exe` 或 `Luqri-Setup-arm64.exe`。启动后从任务栏通知区域打开设置。 [Windows 安装说明](Windows/README.md)
+- **macOS**。打开通用版 DMG，将 Luqri 拖入「应用程序」并启动。首次使用划词或截图时，按提示授予对应权限。[macOS 具体说明](macOS/README.md)
+- **Windows**。按处理器架构运行 `Luqri-Setup-x64.exe` 或 `Luqri-Setup-arm64.exe`。[Windows 具体说明](Windows/README.md)
 
 | 操作 | macOS | Windows |
 | --- | --- | --- |
@@ -79,18 +78,68 @@ Luqri 用来在当前应用里翻译和提取文字。阅读网页、文档或�
 | 截图 OCR | `⌥W` | `Alt+W` |
 | 截图翻译 | `⌥S` | `Alt+S` |
 
-### 配置火山引擎
+### 服务供应商
 
-macOS 默认使用 Apple 翻译和 Apple Vision，可直接使用。Windows 默认使用火山引擎，需要先配置密钥。两端也可接入阿里云。 [macOS 阿里云配置](macOS/README.md#阿里云) · [Windows 阿里云配置](Windows/README.md#阿里云)
+macOS 默认使用 Apple 翻译和 Apple Vision。如果原生服务的结果不符合预期，可以按下方步骤配置云端服务。
 
-1. 在火山引擎按需开通文本翻译、多语种 OCR，或同时开通两项。 [机器翻译开通与计费](https://docs.volcengine.com/docs/machine-translation/product-billing) · [多语种 OCR](https://docs.volcengine.com/docs/large-model-of-image-generation/ability-to-introduce-1)
-2. 在火山引擎访问控制控制台中进入「资源管理 → 密钥管理」，创建访问密钥并获取 `Access Key ID` 和 `Secret Access Key`。所用账号需要有权调用已开通的服务。 [访问控制控制台](https://console.volcengine.com/iam) · [获取访问密钥](https://docs.volcengine.com/docs/cp/signature-mechanism?lang=zh)
-3. 打开 Luqri 设置，在「访问密钥」中选择火山引擎，填写两个字段并点击「保存密钥」。使用火山引擎翻译时勾选对应选项，使用火山引擎截图识别时在「OCR 服务」中选择火山引擎。
-4. 使用火山引擎翻译需要为所用密钥授予费用中心 `ListBillDetail` 的调用权限，以便在发送翻译请求前检查月用量。悬停在设置里的用量环上可查看已用量和本月免费额度。 [账单管理 API](https://docs.volcengine.com/docs/billing-center/openapi-interface-list?lang=zh)
+下表列出 Luqri 用于检查云端用量的免费额度。实际免费余额以服务商控制台为准。
 
-云端翻译会向所选服务发送待译文字，云端 OCR 会发送框选的截图。截图翻译会将识别结果交给已启用的翻译服务。
+| 服务     | 阿里云        | 火山引擎      |
+| -------- | ------------- | ------------- |
+| 机器翻译 | 100 万字符/月 | 200 万字符/月 |
+| OCR 识别 | 200 次/月     | 5,000 次（累计） |
 
-在设置中可指定原文和译文语言。译文设为「自动选择」时，中文原文译为英语，其余原文译为简体中文。
+#### 火山引擎
+
+共需要开通 2 项服务，创建 1 个用户并赋予 4 项权限。
+
+1. [机器翻译](https://console.volcengine.com/translate)
+
+   ![在火山引擎控制台购买并开通机器翻译](README/volcengine-translation.png)
+
+2. [多语种 OCR](https://console.volcengine.com/ai/ability/info/78)
+
+   ![在火山引擎控制台完成实名认证并开通多语种 OCR](README/volcengine-ocr.png)
+
+3. [创建用户](https://console.volcengine.com/iam/identitymanage/user)
+
+   ![在火山引擎访问控制的用户列表中新建用户](README/volcengine-users.png)
+
+   ![在火山引擎选择通过用户名创建](README/volcengine-user-creation-method.png)
+
+   ![填写火山引擎用户名并勾选编程访问](README/volcengine-user-programmatic-access.png)
+
+4. 为用户添加四项权限策略。`TranslateFullAccess` 对应机器翻译，`CVFullAccess` 对应智能视觉，`BillingCenterReadOnlyAccess` 对应费用中心，`CloudTrailReadOnlyAccess` 对应操作审计。
+
+   ![为火山引擎用户直接添加四项权限策略](README/volcengine-user-permissions.png)
+
+5. 在用户详情的「密钥」页创建并保存访问密钥。回到 Luqri 设置，在「访问密钥」中选择火山引擎并保存密钥。
+
+   ![在火山引擎用户详情中创建 Access Key](README/volcengine-user-access-keys.png)
+
+#### 阿里云
+
+开通机器翻译通用版和 OCR 统一识别服务后，创建一个 RAM 用户并添加相应权限策略。
+
+1. [机器翻译](https://mt.console.aliyun.com/service)
+
+   ![在阿里云控制台开通机器翻译通用版](README/aliyun-translation.png)
+
+2. [文字识别](https://ocr.console.aliyun.com/overview)
+
+   ![在阿里云控制台的服务管理与开通页面开通 OCR](README/aliyun-ocr.png)
+
+3. [创建用户](https://ram.console.aliyun.com/users)
+
+   ![在阿里云 RAM 用户列表中新建用户](README/aliyun-ram-users.png)
+
+   ![填写阿里云 RAM 用户信息并选择 AccessKey 访问](README/aliyun-ram-programmatic-access.png)
+
+4. 赋予权限
+
+   ![阿里云 RAM 用户的机器翻译、文字识别和操作审计权限策略](README/aliyun-ram-permissions.png)
+
+5. 创建完成后保存页面显示的 AccessKey。在 Luqri 设置的「访问密钥」中选择阿里云，填入并保存。
 
 ## 项目架构
 
@@ -140,4 +189,4 @@ Set-Location Windows
 
 ## 许可证
 
-Luqri 采用 [MIT 许可证](LICENSE)。界面使用 Lucide SVG 图标，按各端随附的第三方许可证分发。 [macOS 的 Lucide 许可证](macOS/Luqri/Lucide-LICENSE.txt) · [Windows 的 Lucide 许可证](Windows/Lucide-LICENSE.txt)
+Luqri 采用 [MIT 许可证](LICENSE)。[macOS 的 Lucide 许可证](macOS/Luqri/Lucide-LICENSE.txt) · [Windows 的 Lucide 许可证](Windows/Lucide-LICENSE.txt)

@@ -61,7 +61,7 @@ Luqri 支持 macOS 15.0 及以上版本，可在 Apple Silicon 和 Intel Mac 上
 
 ### 火山引擎
 
-- 在「访问密钥」选择火山引擎并保存密钥。翻译用量需要 `ListBillDetail` 权限，按每月 200 万字符核算。 [火山引擎配置](../README.md#配置火山引擎)
+- 在「访问密钥」选择火山引擎并保存密钥。翻译用量需要 `ListBillDetail` 权限，按每月 200 万字符核算。 [火山引擎配置](../README.md#火山引擎)
 - 火山引擎 OCR 按 5,000 次累计用量检查。从首次启用用量统计的月份起记录，应用启动时和运行期间每小时通过操作审计 `LookupEvents` 合并近期可查到的调用。审计不可用时，用量环会标明当前仅显示已记录的用量。 [火山引擎操作审计](https://docs.volcengine.com/docs/operations-audit/lookup-events-query-the-list-of-audit-events?lang=zh)
 
 ### 阿里云
