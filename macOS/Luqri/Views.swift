@@ -42,9 +42,13 @@ final class UtilityPanel: NSPanel {
     var onEscape: (() -> Void)?
     var onEditorReturn: (() -> Bool)?
     weak var sourceEditor: NSTextView? {
-        didSet { focusEditorOnOpen() }
+        didSet {
+            initialFirstResponder = sourceEditor
+            focusEditorOnOpen()
+        }
     }
     private var didFocusEditor = false
+    private var focusTask: Task<Void, Never>?
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func cancelOperation(_ sender: Any?) { onEscape?() }
@@ -61,16 +65,35 @@ final class UtilityPanel: NSPanel {
     }
 
     private func focusEditorOnOpen() {
-        guard isKeyWindow, !didFocusEditor else { return }
-        didFocusEditor = focusSourceEditor()
+        guard isKeyWindow, sourceEditor != nil, !didFocusEditor, focusTask == nil else { return }
+        focusTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.focusTask = nil
+            if self.isKeyWindow { self.didFocusEditor = self.focusSourceEditor() }
+        }
     }
 
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, event.charactersIgnoringModifiers == "\r",
+        if event.type == .keyDown, let character = event.charactersIgnoringModifiers,
+           character == "\r" || character == "\u{3}",
            event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty,
-           let editor = firstResponder as? NSTextView, !editor.hasMarkedText(),
+           let editor = firstResponder as? NSTextView, editor === sourceEditor, !editor.hasMarkedText(),
            let onEditorReturn, event.isARepeat || onEditorReturn() { return }
         super.sendEvent(event)
+    }
+}
+
+private struct TranslationWindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> DragView { DragView() }
+
+    func updateNSView(_ view: DragView, context: Context) {}
+
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { false }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
     }
 }
 
@@ -164,38 +187,9 @@ struct TranslationView: View {
             maximumHeight: min(TranslationEditor.maximumHeight, availableHeight * 0.3, editorLimit)
         )
         let resultHeight = max(24, min(expanded > 1 ? 160 : 220, (contentHeight - editorHeight) / visibleResults))
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            editor(height: editorHeight)
-            if let error = speech?.error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if !hasText && showEmptyClipboardHint {
-                clipboardHint
-            }
-            if providers.isEmpty {
-                notice("请先开启翻译服务", action: "打开设置", perform: openSettings)
-            } else {
-                ForEach(providers) { provider in
-                    serviceRow(provider, resultHeight: resultHeight)
-                }
-            }
+        TranslationPanelLayout {
+            panelContent(providers: providers, editorHeight: editorHeight, resultHeight: resultHeight)
         }
-        .padding(Self.windowPadding)
-        .frame(width: Self.preferredWidth)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(Color(nsColor: .textBackgroundColor))
-        .overlay {
-            RoundedRectangle(cornerRadius: Self.cornerRadius)
-                .strokeBorder(.primary.opacity(0.15), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
-        .onGeometryChange(for: CGSize.self, of: { proxy in
-            CGSize(width: ceil(proxy.size.width), height: ceil(proxy.size.height))
-        }, action: resize)
         .onDisappear { speech?.stop() }
         .onChange(of: model.text) {
             copiedSource = false
@@ -212,14 +206,51 @@ struct TranslationView: View {
             }
         }
         .onExitCommand(perform: close)
-        .background {
-            if let job = model.appleJob {
-                Color.clear
-                    .frame(width: 0, height: 0)
-                    .translationTask(job.appleConfiguration, action: model.appleAction(for: job))
-                    .id(job.id)
+        .background { AppleTranslationTask(model: model) }
+    }
+
+    private func panelContent(providers: [Provider], editorHeight: CGFloat, resultHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            editor(height: editorHeight)
+            if let error = speech?.error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !hasText && showEmptyClipboardHint {
+                clipboardHint
+            }
+            if providers.isEmpty {
+                notice("请先开启翻译服务", action: "打开设置", perform: openSettings)
+            } else {
+                ForEach(providers) { provider in
+                    let expanded = !collapsedProviders.contains(provider) && hasText
+                    TranslationServiceRow(
+                        model: model, provider: provider, expanded: expanded,
+                        resultWidth: Self.preferredWidth - 2 * (Self.windowPadding + TranslationServiceRow.resultPadding),
+                        resultHeight: resultHeight,
+                        copiedResult: $copiedResult, speech: $speech
+                    ) {
+                        if expanded { collapsedProviders.insert(provider) }
+                        else { collapsedProviders.remove(provider) }
+                    }
+                }
             }
         }
+        .padding(Self.windowPadding)
+        .frame(width: Self.preferredWidth)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.cornerRadius)
+                .strokeBorder(.primary.opacity(0.15), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .onGeometryChange(for: CGSize.self, of: { proxy in
+            CGSize(width: ceil(proxy.size.width), height: ceil(proxy.size.height))
+        }, action: resize)
     }
 
     private func notice(_ message: String, action: String, perform: @escaping () -> Void) -> some View {
@@ -246,37 +277,38 @@ struct TranslationView: View {
             Text("翻译")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.primary)
-            Spacer()
-            iconButton("pin", label: pinned ? "取消置顶" : "置顶浮窗") {
+                .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+                .overlay { TranslationWindowDragArea().accessibilityHidden(true) }
+            iconButton("pin", label: pinned ? "取消置顶" : "置顶浮窗", selected: pinned) {
                 pinned.toggle()
                 setPinned(pinned)
             }
-            .foregroundStyle(pinned ? Color.accentColor : Color.secondary)
             .accessibilityAddTraits(pinned ? .isSelected : [])
 
             iconButton("settings", label: "设置", action: openSettings)
-            iconButton("x", label: "关闭", action: close)
+            iconButton("x", label: "关闭", size: 16, action: close)
         }
         .foregroundStyle(.secondary)
     }
 
     private func editor(height: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Group {
+            TranslationEditor(text: editorText, inputError: model.inputError, isLoading: model.isLoadingInput) {
+                editorFocused = $0
+            }
+            .overlay(alignment: .topLeading) {
                 if model.isLoadingInput {
-                    LoadingIndicator(title: "正在识别文字")
-                        .padding(.leading, 5)
-                        .padding(.top, 1)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                } else {
-                    TranslationEditor(text: editorText, inputError: model.inputError) { editorFocused = $0 }
+                    LoadingSweepLabel(title: "正在识别文字")
+                        .padding(.leading, TranslationEditor.placeholderLeading)
+                        .padding(.top, TranslationEditor.verticalInset)
+                        .allowsHitTesting(false)
                 }
             }
             .font(.system(size: TranslationEditor.fontSize))
             .frame(height: height)
 
             HStack(spacing: 3) {
-                speechButton(.source, text: model.text, language: model.source)
+                SpeechButton(item: .source, text: model.text, language: model.source, speech: $speech)
                     .disabled(!hasText)
                 iconButton(copiedSource ? "check" : "copy", label: copiedSource ? "已复制" : "复制原文") {
                     Clipboard.write(model.text)
@@ -293,9 +325,8 @@ struct TranslationView: View {
                         .frame(height: 26)
                 }
                 .buttonStyle(PanelButtonStyle(prominent: true))
-                .keyboardShortcut(.return, modifiers: .command)
-                .help("翻译（⌘↩）")
-                .disabled(!hasText || model.enabledProviders.isEmpty)
+                .help("翻译（Enter）")
+                .disabled(model.isLoadingInput || model.enabledProviders.isEmpty)
             }
         }
         .padding(Self.editorPadding)
@@ -319,17 +350,73 @@ struct TranslationView: View {
         .background(card)
     }
 
-    private func serviceRow(_ provider: Provider, resultHeight: CGFloat) -> some View {
+    private func translate() {
+        guard hasText else {
+            pasteAndTranslate()
+            return
+        }
+        collapsedProviders.removeAll()
+        model.translate()
+    }
+
+    private func pasteAndTranslate() {
+        let input = Clipboard.text
+        guard input.hasNonWhitespace else {
+            if !hasText { showEmptyClipboardHint = true }
+            focusEditor()
+            return
+        }
+        collapsedProviders.removeAll()
+        model.begin(with: input)
+    }
+}
+
+// Keep the editor at the top of the old window frame while AppKit applies the new fitting height.
+private struct TranslationPanelLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let content = subviews.first else { return .zero }
+        let size = content.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        guard let height = proposal.height, height.isFinite, height > 0 else { return size }
+        return CGSize(width: size.width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.minY), anchor: .top,
+                              proposal: ProposedViewSize(width: bounds.width, height: nil))
+    }
+}
+
+private struct AppleTranslationTask: View {
+    let model: TranslationModel
+
+    var body: some View {
+        if let job = model.appleJob {
+            Color.clear
+                .frame(width: 0, height: 0)
+                .translationTask(job.appleConfiguration, action: model.appleAction(for: job))
+                .id(job.id)
+        }
+    }
+}
+
+private struct TranslationServiceRow: View {
+    static let resultPadding: CGFloat = 10
+
+    let model: TranslationModel
+    let provider: Provider
+    let expanded: Bool
+    let resultWidth: CGFloat
+    let resultHeight: CGFloat
+    @Binding var copiedResult: Provider?
+    @Binding var speech: SpeechPlayback?
+    let toggleExpanded: () -> Void
+
+    var body: some View {
         let output = model.output(for: provider)
-        let expanded = !collapsedProviders.contains(provider) && hasText
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             Button {
-                if expanded {
-                    collapsedProviders.insert(provider)
-                    if speech?.playing == .translation(provider) { speech?.stop() }
-                } else {
-                    collapsedProviders.remove(provider)
-                }
+                toggleExpanded()
+                if expanded, speech?.playing == .translation(provider) { speech?.stop() }
             } label: {
                 HStack(spacing: 8) {
                     LucideIcon(name: provider == .volcengine ? "flame" : "languages", size: 14)
@@ -348,88 +435,123 @@ struct TranslationView: View {
             .accessibilityValue(expanded ? "已展开" : "已折叠")
             if expanded {
                 Divider().padding(.horizontal, 10)
-                serviceOutput(output, for: provider, resultHeight: resultHeight)
+                serviceOutput(output, for: provider)
             }
         }
-        .background(card)
+        .background(RoundedRectangle(cornerRadius: 9).fill(.primary.opacity(0.055)))
         .onChange(of: output) {
             if copiedResult == provider { copiedResult = nil }
             if speech?.playing == .translation(provider) { speech?.stop() }
         }
     }
 
-    private func serviceOutput(_ output: TranslationOutput, for provider: Provider, resultHeight: CGFloat) -> some View {
+    private func serviceOutput(_ output: TranslationOutput, for provider: Provider) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             switch output {
             case .translating:
-                LoadingIndicator(title: "正在翻译")
+                LoadingSweepLabel(title: "正在翻译")
             case .failed(let error):
-                readableOutput(error, maximumHeight: resultHeight)
+                TranslationResultText(text: error, width: resultWidth, maximumHeight: resultHeight)
             case .translated(let text, let language):
-                readableOutput(text, maximumHeight: resultHeight)
+                TranslationResultText(text: text, width: resultWidth, maximumHeight: resultHeight)
                 let copied = copiedResult == provider
                 HStack(spacing: 3) {
-                    speechButton(.translation(provider), text: text, language: language)
+                    SpeechButton(item: .translation(provider), text: text, language: language, speech: $speech)
                     iconButton(copied ? "check" : "copy", label: copied ? "已复制" : "复制译文") {
                         Clipboard.write(text)
                         copiedResult = provider
                     }
                 }
             case .idle:
-                Text("按 ⌘↩ 翻译").foregroundStyle(.secondary)
+                Text("按 Enter 翻译").foregroundStyle(.secondary)
             }
         }
         .font(.system(size: 14))
-        .padding(.horizontal, 10)
+        .padding(.horizontal, Self.resultPadding)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private func readableOutput(_ text: String, maximumHeight: CGFloat) -> some View {
-        ViewThatFits(in: .vertical) {
-            Text(text)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-            ScrollView {
+private struct TranslationResultText: View {
+    let text: String
+    let width: CGFloat
+    let maximumHeight: CGFloat
+
+    var body: some View {
+        if text.utf8.count >= 4_096 {
+            scrollable
+        } else {
+            ViewThatFits(in: .vertical) {
                 Text(text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
+                scrollable
             }
+            .frame(maxHeight: maximumHeight, alignment: .topLeading)
         }
-        .frame(maxHeight: maximumHeight, alignment: .topLeading)
     }
 
-    private func iconButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            LucideIcon(name: icon, size: 14)
-                .frame(width: 26, height: 26)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(PanelButtonStyle())
-        .help(label)
-        .accessibilityLabel(label)
+    private var scrollable: some View {
+        ScrollableResultText(text: text)
+            .frame(width: width, height: maximumHeight)
+    }
+}
+
+private struct ScrollableResultText: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+
+        let view = NSTextView(usingTextLayoutManager: true)
+        view.isEditable = false
+        view.isSelectable = true
+        view.isRichText = false
+        view.drawsBackground = false
+        view.autoresizingMask = [.width]
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        view.textContainer?.containerSize = CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        view.textContainer?.widthTracksTextView = true
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainerInset = .zero
+        view.font = .systemFont(ofSize: 14)
+        view.textColor = .labelColor
+        view.setAccessibilityLabel("译文")
+        scroll.documentView = view
+        return scroll
     }
 
-    private func translate() {
-        collapsedProviders.removeAll()
-        model.translate()
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard context.coordinator.text != text, let view = scroll.documentView as? NSTextView else { return }
+        view.string = text
+        context.coordinator.text = text
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
-    private func pasteAndTranslate() {
-        let input = Clipboard.text
-        guard input.hasNonWhitespace else {
-            if !hasText { showEmptyClipboardHint = true }
-            focusEditor()
-            return
-        }
-        collapsedProviders.removeAll()
-        model.begin(with: input)
+    final class Coordinator {
+        var text = ""
     }
+}
 
-    private func speechButton(_ item: SpeechPlayback.Item, text: String, language: Language?) -> some View {
+private struct SpeechButton: View {
+    let item: SpeechPlayback.Item
+    let text: String
+    let language: Language?
+    @Binding var speech: SpeechPlayback?
+
+    var body: some View {
         let playing = speech?.playing == item
         let label = item == .source ? "朗读原文" : "朗读译文"
-        return iconButton(playing ? "square" : "volume-2", label: playing ? "停止\(label)" : label) {
+        iconButton(playing ? "square" : "volume-2", label: playing ? "停止\(label)" : label) {
             let playback = speech ?? SpeechPlayback()
             speech = playback
             playback.toggle(item, text: text, language: language)
@@ -437,17 +559,34 @@ struct TranslationView: View {
     }
 }
 
+@MainActor
+private func iconButton(
+    _ icon: String, label: String, selected: Bool = false, size: CGFloat = 14, action: @escaping () -> Void
+) -> some View {
+    Button(action: action) {
+        LucideIcon(name: icon, size: size)
+            .frame(width: 26, height: 26)
+            .contentShape(Rectangle())
+    }
+    .buttonStyle(PanelButtonStyle(prominent: selected))
+    .help(label)
+    .accessibilityLabel(label)
+}
+
 private struct TranslationEditor: NSViewRepresentable {
     static let fontSize: CGFloat = 15
     static let minimumHeight: CGFloat = 72
     static let maximumHeight: CGFloat = 176
     private static let linePadding: CGFloat = 5
-    private static let verticalInset: CGFloat = 1
+    private static let caretSpacing: CGFloat = 3
+    static let placeholderLeading = linePadding + caretSpacing
+    static let verticalInset: CGFloat = 1
     private static let layoutProbeLength = 4_096
     private static let paragraphBreaks = CharacterSet(charactersIn: "\r\n\u{2029}")
 
     @Binding var text: String
     let inputError: String?
+    let isLoading: Bool
     let onFocusChange: (Bool) -> Void
 
     static func fittingHeight(for text: String, width: CGFloat, maximumHeight: CGFloat) -> CGFloat {
@@ -504,7 +643,7 @@ private struct TranslationEditor: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        let editor = EditorView()
+        let editor = EditorView(usingTextLayoutManager: true)
         editor.autoresizingMask = [.width]
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
@@ -538,15 +677,16 @@ private struct TranslationEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.editor = self
         guard let editor = scroll.documentView as? EditorView else { return }
-        let placeholder = inputError ?? "输入或粘贴文字"
+        let placeholder = isLoading ? "" : (inputError ?? "输入或粘贴文字")
         if editor.placeholder != placeholder {
             editor.placeholder = placeholder
             editor.setAccessibilityHelp(inputError)
         }
         if context.coordinator.committedText != text, !editor.hasMarkedText() {
+            let needsPlaceholderUpdate = context.coordinator.committedText.isEmpty != text.isEmpty
             editor.string = text
             context.coordinator.committedText = text
-            editor.needsDisplay = true
+            if needsPlaceholderUpdate { editor.needsDisplay = true }
         }
     }
 
@@ -559,13 +699,13 @@ private struct TranslationEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? EditorView else { return }
-            view.needsDisplay = true
             publishCommittedText(from: view)
         }
 
         func publishCommittedText(from view: EditorView) {
             guard !view.isSettingMarkedText, !view.hasMarkedText() else { return }
             let text = view.string
+            if committedText.isEmpty != text.isEmpty { view.needsDisplay = true }
             committedText = text
             if editor.text != text { editor.text = text }
         }
@@ -579,7 +719,7 @@ private struct TranslationEditor: NSViewRepresentable {
             didSet { if oldValue != placeholder { needsDisplay = true } }
         }
 
-        var showsPlaceholder: Bool { string.isEmpty && !hasMarkedText() }
+        var showsPlaceholder: Bool { textStorage?.length == 0 && !hasMarkedText() }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -599,17 +739,18 @@ private struct TranslationEditor: NSViewRepresentable {
         }
 
         override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+            let hadPlaceholder = showsPlaceholder
             isSettingMarkedText = true
             super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
             isSettingMarkedText = false
-            needsDisplay = true
+            if hadPlaceholder != showsPlaceholder { needsDisplay = true }
         }
 
         override func unmarkText() {
             let wasMarked = hasMarkedText()
             super.unmarkText()
             if wasMarked {
-                needsDisplay = true
+                if showsPlaceholder { needsDisplay = true }
                 onUnmark?()
             }
         }
@@ -617,46 +758,49 @@ private struct TranslationEditor: NSViewRepresentable {
         override func draw(_ dirtyRect: CGRect) {
             super.draw(dirtyRect)
             guard showsPlaceholder, !placeholder.isEmpty else { return }
-            let origin = textContainerOrigin
-            let leading = origin.x + (textContainer?.lineFragmentPadding ?? 0)
-            let rect = CGRect(x: leading, y: origin.y, width: max(0, bounds.width - leading * 2), height: bounds.height - origin.y)
-            (placeholder as NSString).draw(with: rect, options: .usesLineFragmentOrigin, attributes: [
+            let text = NSAttributedString(string: placeholder, attributes: [
                 .font: font ?? NSFont.systemFont(ofSize: TranslationEditor.fontSize), .foregroundColor: NSColor.secondaryLabelColor
             ])
+            let origin = textContainerOrigin
+            let leading = origin.x + TranslationEditor.placeholderLeading
+            let rect = CGRect(x: leading, y: origin.y, width: max(0, bounds.width - leading - origin.x),
+                              height: bounds.height - origin.y)
+            text.draw(with: rect, options: .usesLineFragmentOrigin)
         }
     }
 }
 
-private struct LoadingIndicator: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+private struct LoadingSweepLabel: View {
     let title: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var sweeping = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(title)
-            Group {
-                if reduceMotion {
-                    dots(highlighted: nil)
-                } else {
-                    PhaseAnimator(0..<3) { phase in
-                        dots(highlighted: phase)
-                    } animation: { _ in
-                        .easeInOut(duration: 0.24)
-                    }
+        Text(title)
+            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            .overlay {
+                if !reduceMotion {
+                    Text(title)
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 0.8)
+                        .mask {
+                            GeometryReader { proxy in
+                                let width = proxy.size.width
+                                let band = width / 2
+                                LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
+                                    .frame(width: band)
+                                    .offset(x: sweeping ? width : -band)
+                            }
+                        }
+                        .onAppear {
+                            withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
+                                sweeping = true
+                            }
+                        }
+                        .onDisappear { sweeping = false }
                 }
             }
-            .accessibilityHidden(true)
-        }
-        .foregroundStyle(.secondary)
-    }
-
-    private func dots(highlighted: Int?) -> some View {
-        HStack(spacing: 3) {
-            ForEach(0..<3) { index in
-                Circle()
-                    .frame(width: 4, height: 4)
-                    .opacity(highlighted == nil || highlighted == index ? 1 : 0.25)
-            }
-        }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
     }
 }

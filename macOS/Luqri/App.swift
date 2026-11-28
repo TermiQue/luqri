@@ -633,7 +633,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         settingsAwaitingFocus = nil
         closeTranslation(checkForExit: false)
         let panel = UtilityPanel(
-            contentRect: .zero, styleMask: [.borderless, .fullSizeContentView],
+            contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         panel.appearance = appearance
@@ -645,7 +645,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = true
+        panel.isMovable = true
         panel.delegate = self
         panel.title = "Luqri 翻译"
         panel.onEscape = { [weak self] in self?.closeTranslation() }
@@ -659,8 +659,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             model: model, availableHeight: screen?.visibleFrame.insetBy(dx: 8, dy: 8).height ?? .greatestFiniteMagnitude,
             focusEditor: { [weak panel] in panel?.focusSourceEditor() },
             close: { [weak self] in self?.closeTranslation() },
-            openSettings: { [weak self] in self?.showSettings() },
-            setPinned: { [weak self] pinned in self?.translationPinned = pinned },
+            openSettings: { [weak self] in
+                guard let self else { return }
+                self.showSettings()
+                self.closeTranslation()
+            },
+            setPinned: { [weak self, weak panel] pinned in
+                self?.translationPinned = pinned
+                panel?.level = pinned ? .floating : .normal
+            },
             resize: { [weak self, weak panel] size in
                 guard let panel else { return }
                 self?.scheduleTranslationResize(panel, size: size)
@@ -674,7 +681,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         } else if let input, input.hasNonWhitespace {
             model.begin(with: input)
         }
-        let size = hosting.sizeThatFits(in: CGSize(width: TranslationView.preferredWidth, height: .greatestFiniteMagnitude))
+        let size = hosting.sizeThatFits(in: CGSize(width: TranslationView.preferredWidth, height: 0))
         if let screen {
             panel.setFrame(translationFrame(contentSize: size, screen: screen.frame, visible: screen.visibleFrame), display: false)
         } else {
@@ -684,9 +691,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         translationPanel = panel
         translationScreenshot = screenshot
         panel.orderFrontRegardless()
-        NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
-        if !NSApp.isActive { NSRunningApplication.current.activate() }
     }
 
     private func translationFrame(contentSize: CGSize, screen: CGRect, visible: CGRect) -> CGRect {
@@ -723,7 +728,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         let top = min(frame.maxY, visible?.maxY ?? frame.maxY)
         let bottom = max(top - height, visible?.minY ?? top - height)
         guard abs(frame.height - height) >= 1 else { return }
-        panel.setFrame(CGRect(x: frame.minX, y: bottom, width: frame.width, height: height), display: true)
+        panel.setFrame(CGRect(x: frame.minX, y: bottom, width: frame.width, height: height), display: false)
+        panel.contentView?.layoutSubtreeIfNeeded()
     }
 
     private func closeTranslation(checkForExit: Bool = true) {

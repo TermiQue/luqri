@@ -87,11 +87,18 @@ final class TranslationModel {
         case idle, loading, failed(String)
     }
 
+    private struct SourceInput {
+        var text = ""
+        var hasText = false
+        var status = InputStatus.idle
+    }
+
     private let defaults: UserDefaults
     @ObservationIgnored private let translateCloud: (TranslationJob) async throws -> String
 
-    private(set) var text = ""
-    private(set) var hasText = false
+    private var input = SourceInput()
+    var text: String { input.text }
+    var hasText: Bool { input.hasText }
     var source: Language? {
         didSet { if source != oldValue { changeLanguages() } }
     }
@@ -109,14 +116,13 @@ final class TranslationModel {
     @ObservationIgnored private var activeJobs: [Provider: UUID] = [:]
     private(set) var isTranslating = false
     private(set) var appleJob: TranslationJob?
-    private var inputStatus = InputStatus.idle
     @ObservationIgnored private var inputTask: Task<Void, Never>?
     @ObservationIgnored private var cloudTasks: [Provider: Task<Void, Never>] = [:]
 
     var enabledProviders: [Provider] { Provider.allCases.filter(selectedProviders.contains) }
-    var isLoadingInput: Bool { inputStatus == .loading }
+    var isLoadingInput: Bool { input.status == .loading }
     var inputError: String? {
-        if case .failed(let message) = inputStatus { return message }
+        if case .failed(let message) = input.status { return message }
         return nil
     }
 
@@ -158,20 +164,20 @@ final class TranslationModel {
 
     func loadInput(_ load: @escaping () async throws -> String) {
         inputTask?.cancel()
-        inputStatus = .loading
+        input.status = .loading
         inputTask = Task(priority: .userInitiated) { [weak self] in
             do {
                 try Task.checkCancellation()
                 let input = try await load()
                 guard let self, !Task.isCancelled else { return }
                 self.inputTask = nil
-                self.inputStatus = .idle
+                if self.text == input { self.input.status = .idle }
                 self.begin(with: input)
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.inputTask = nil
                 let message = (error as? LocalizedError)?.errorDescription ?? "无法读取原文，请重试。"
-                self.inputStatus = error is CancellationError ? .idle : .failed(message)
+                self.input.status = error is CancellationError ? .idle : .failed(message)
             }
         }
     }
@@ -218,23 +224,20 @@ final class TranslationModel {
 
     func edit(_ input: String) {
         guard text != input else { return }
-        cancelInputLoad()
+        inputTask?.cancel()
+        inputTask = nil
         clearResults()
-        text = input
-        let nonWhitespace = input.hasNonWhitespace
-        if hasText != nonWhitespace { hasText = nonWhitespace }
+        self.input = SourceInput(text: input, hasText: input.hasNonWhitespace)
     }
 
     func reset() {
-        cancelInputLoad()
-        edit("")
-    }
-
-    private func cancelInputLoad() {
-        guard inputStatus != .idle else { return }
-        inputTask?.cancel()
-        inputTask = nil
-        inputStatus = .idle
+        if text.isEmpty {
+            inputTask?.cancel()
+            inputTask = nil
+            if input.status != .idle { input.status = .idle }
+        } else {
+            edit("")
+        }
     }
 
     private func automaticTarget(for input: String) -> Language {
