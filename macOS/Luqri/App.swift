@@ -136,6 +136,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if let applicationKeyMonitor { NSEvent.removeMonitor(applicationKeyMonitor) }
     }
 
+    func applicationDidChangeScreenParameters(_ notification: Notification) {
+        screenshotCapture.invalidateContentFilter()
+    }
+
     func applicationDidBecomeActive(_ notification: Notification) {
         if let window = settingsAwaitingFocus {
             settingsAwaitingFocus = nil

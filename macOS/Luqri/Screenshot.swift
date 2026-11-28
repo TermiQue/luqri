@@ -33,16 +33,28 @@ final class ScreenshotCapture {
     }
 
     private let overlay = SelectionOverlay()
+    private let captures = SerialWorkQueue()
     private var selectionID: UUID?
+    private var cachedFilter: (displayID: CGDirectDisplayID, filter: SCContentFilter)?
+    private var displayConfiguration = UUID()
 
-    func capture(keepsFocus: Bool = false, maximumPixelDimension: Int? = nil) async throws -> Screenshot? {
+    func invalidateContentFilter() {
+        cachedFilter = nil
+        displayConfiguration = UUID()
+    }
+
+    func capture(
+        keepsFocus: Bool = false, maximumPixelDimension: Int? = nil
+    ) async throws -> Screenshot? {
         try Task.checkCancellation()
         guard AppPermission.screenRecording.isGranted else {
             throw Failure.permissionDenied
         }
         guard let selection = try await selectRegion(keepsFocus: keepsFocus) else { return nil }
         do {
-            let image = try await Self.captureImage(selection, maximumPixelDimension: maximumPixelDimension)
+            let image = try await captures.run {
+                try await self.captureImage(selection, maximumPixelDimension: maximumPixelDimension)
+            }
             try Task.checkCancellation()
             return Screenshot(image: image, anchor: selection.anchor)
         } catch let error as SCStreamError where error.code == .userDeclined {
@@ -91,24 +103,54 @@ final class ScreenshotCapture {
         return selection
     }
 
-    private nonisolated static func captureImage(
+    private func captureImage(
         _ selection: ScreenSelection, maximumPixelDimension: Int?
     ) async throws -> CGImage {
+        if let cachedFilter, cachedFilter.displayID == selection.displayID {
+            do {
+                return try await Self.captureImage(selection, filter: cachedFilter.filter, limit: maximumPixelDimension)
+            } catch {
+                if self.cachedFilter?.filter === cachedFilter.filter { self.cachedFilter = nil }
+                try Task.checkCancellation()
+                if let streamError = error as? SCStreamError,
+                   streamError.code == .userDeclined || streamError.code == .userStopped { throw error }
+            }
+        }
+
+        let generation = displayConfiguration
         let contents = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = contents.displays.first(where: { $0.displayID == selection.displayID }) else {
+        try Task.checkCancellation()
+        guard generation == displayConfiguration,
+              let display = contents.displays.first(where: { $0.displayID == selection.displayID }) else {
             throw Failure.displayUnavailable
         }
-        try Task.checkCancellation()
+
         let pid = ProcessInfo.processInfo.processIdentifier
         let ownApplications = contents.applications.filter { $0.processID == pid }
         let filter = SCContentFilter(display: display, excludingApplications: ownApplications, exceptingWindows: [])
+        let image = try await Self.captureImage(selection, filter: filter, limit: maximumPixelDimension)
+        if generation == displayConfiguration, !Task.isCancelled, !ownApplications.isEmpty {
+            cachedFilter = (display.displayID, filter)
+        }
+        return image
+    }
+
+    private static func captureImage(
+        _ selection: ScreenSelection, filter: SCContentFilter, limit: Int?
+    ) async throws -> CGImage {
         let configuration = SCStreamConfiguration()
         configuration.sourceRect = selection.rect
-        let size = pixelSize(for: selection.rect.size, scale: CGFloat(filter.pointPixelScale), limit: maximumPixelDimension)
+        let size = pixelSize(for: selection.rect.size, scale: CGFloat(filter.pointPixelScale), limit: limit)
         configuration.width = size.width
         configuration.height = size.height
         configuration.showsCursor = false
-        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        return try await withCheckedThrowingContinuation { continuation in
+            SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) { image, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let image { continuation.resume(returning: image) }
+                else { continuation.resume(throwing: Failure.displayUnavailable) }
+            }
+        }
     }
 
     private nonisolated static func pixelSize(
@@ -283,6 +325,7 @@ private final class SelectionView: NSView {
         layer = root
         wantsLayer = true
         updateLayers()
+        layoutHint()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -297,6 +340,7 @@ private final class SelectionView: NSView {
     override func layout() {
         super.layout()
         updateLayers()
+        layoutHint()
     }
 
     override func viewDidChangeBackingProperties() {
@@ -342,11 +386,16 @@ private final class SelectionView: NSView {
             rightShade.frame = CGRect(x: opening.maxX, y: opening.minY, width: bounds.maxX - opening.maxX, height: opening.height)
             border.frame = opening.insetBy(dx: -0.5, dy: -0.5)
         }
-        if hasHint {
-            hint.frame = hintBackground
-            hintText.frame = CGRect(x: 14, y: 8, width: Self.hintSize.width, height: Self.hintSize.height)
-            hint.isHidden = !shouldShowHint
-        }
+    }
+
+    private func layoutHint() {
+        guard hasHint else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        hint.frame = hintBackground
+        hintText.frame = CGRect(x: 14, y: 8, width: Self.hintSize.width, height: Self.hintSize.height)
+        hint.isHidden = !shouldShowHint
+        CATransaction.commit()
     }
 
     private var hintFrame: CGRect {
@@ -379,7 +428,7 @@ private final class SelectionView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        setSelection(selection(to: location(event)))
+        setSelection(selection(to: location(event)).integral.intersection(bounds))
     }
 
     override func mouseUp(with event: NSEvent) {

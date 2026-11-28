@@ -82,26 +82,6 @@ enum CloudBilling {
     }
 }
 
-// Keep an async refresh and its updates serialized across actor suspension points.
-private struct UsageQueue {
-    private var busy = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    mutating func enqueue(_ continuation: CheckedContinuation<Void, Never>) {
-        if busy {
-            waiters.append(continuation)
-        } else {
-            busy = true
-            continuation.resume()
-        }
-    }
-
-    mutating func release() {
-        if waiters.isEmpty { busy = false }
-        else { waiters.removeFirst().resume() }
-    }
-}
-
 actor MonthlyQuota {
     typealias Query = @Sendable (CloudCredentials, Date) async throws -> Decimal
 
@@ -114,7 +94,7 @@ actor MonthlyQuota {
     private let query: Query
     private let storage: @Sendable (CloudCredentials) -> URL
     private var lastRefresh: (credentials: CloudCredentials, month: String, date: Date)?
-    private var queue = UsageQueue()
+    private let queue = SerialWorkQueue()
 
     init(_ meter: CloudMeter, query: @escaping Query,
          storage: (@Sendable (CloudCredentials) -> URL)? = nil) {
@@ -124,19 +104,24 @@ actor MonthlyQuota {
     }
 
     func read(_ credentials: CloudCredentials) async throws -> Decimal {
-        await withCheckedContinuation { queue.enqueue($0) }
-        defer { queue.release() }
-        try Task.checkCancellation()
+        try await queue.run { try await self.readUsage(credentials) }
+    }
+
+    private func readUsage(_ credentials: CloudCredentials) async throws -> Decimal {
         let now = Date.now
         let url = storage(credentials)
         return try await refresh(load(url, now: now), at: url, credentials: credentials, now: now)
     }
 
     func send<Value: Sendable>(
+        _ credentials: CloudCredentials, amount: Int, operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await queue.run { try await self.sendReserved(credentials, amount: amount, operation: operation) }
+    }
+
+    private func sendReserved<Value: Sendable>(
         _ credentials: CloudCredentials, amount: Int, operation: @Sendable () async throws -> Value
     ) async throws -> Value {
-        await withCheckedContinuation { queue.enqueue($0) }
-        defer { queue.release() }
         let url = storage(credentials)
         while true {
             try Task.checkCancellation()
@@ -222,7 +207,7 @@ actor VolcengineOCRUsage {
 
     private let query: Query
     private let storage: @Sendable (CloudCredentials) -> URL
-    private var queue = UsageQueue()
+    private let queue = SerialWorkQueue()
     private var state: State?
     private var credentials: CloudCredentials?
 
@@ -232,9 +217,10 @@ actor VolcengineOCRUsage {
     }
 
     func read(_ credentials: CloudCredentials) async throws -> (used: Decimal, note: String?) {
-        await withCheckedContinuation { queue.enqueue($0) }
-        defer { queue.release() }
-        try Task.checkCancellation()
+        try await queue.run { try await self.readUsage(credentials) }
+    }
+
+    private func readUsage(_ credentials: CloudCredentials) async throws -> (used: Decimal, note: String?) {
         var current = try load(credentials, now: .now)
         defer { state = current }
         try await refresh(&current, credentials: credentials, now: .now)
@@ -244,10 +230,13 @@ actor VolcengineOCRUsage {
         return (current.count, note)
     }
 
-    func send(_ credentials: CloudCredentials, operation: @Sendable () async throws -> (id: String?, text: String)) async throws -> String {
-        await withCheckedContinuation { queue.enqueue($0) }
-        defer { queue.release() }
-        try Task.checkCancellation()
+    func send(_ credentials: CloudCredentials, operation: @escaping @Sendable () async throws -> (id: String?, text: String)) async throws -> String {
+        try await queue.run { try await self.sendTracked(credentials, operation: operation) }
+    }
+
+    private func sendTracked(
+        _ credentials: CloudCredentials, operation: @Sendable () async throws -> (id: String?, text: String)
+    ) async throws -> String {
         var current = try load(credentials, now: .now)
         defer { state = current }
         try requireCapacity(current)

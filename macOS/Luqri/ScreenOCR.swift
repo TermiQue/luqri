@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Vision
 
 enum OCRProvider: String, CaseIterable, Identifiable {
@@ -47,40 +48,68 @@ enum OCRFailure: LocalizedError {
 }
 
 enum ScreenOCR {
+    private static let jobs = SerialWorkQueue()
+    private static let worker = DispatchQueue(label: "com.termique.luqri.vision", qos: .userInitiated)
+
     static func recognize(_ image: CGImage) async throws -> String {
-        try Task.checkCancellation()
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.automaticallyDetectsLanguage = true
-        request.usesLanguageCorrection = true
-        let cancellation = RequestCancellation(request: request)
-        do {
-            try await withTaskCancellationHandler {
+        try await jobs.run {
+            let recognition = Recognition()
+            return try await withTaskCancellationHandler {
                 try Task.checkCancellation()
-                try VNImageRequestHandler(cgImage: image).perform([request])
+                let text = try await withCheckedThrowingContinuation { continuation in
+                    worker.async {
+                        continuation.resume(with: Result { try recognition.perform(on: image) })
+                    }
+                }
+                try Task.checkCancellation()
+                return text
             } onCancel: {
-                cancellation.cancel()
+                recognition.cancel()
             }
-        } catch {
-            try Task.checkCancellation()
-            throw error
         }
-        try Task.checkCancellation()
-        let width = image.width, height = image.height
-        let lines = (request.results ?? []).lazy.compactMap { observation -> OCRLine? in
-            guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty else { return nil }
-            return OCRLine(text: text, bounds: VNImageRectForNormalizedRect(observation.boundingBox, width, height))
-        }
-        let text = OCRLine.paragraphs(from: lines)
-        guard !text.isEmpty else { throw OCRFailure.noText }
-        return text
     }
 
-    // Vision supports aborting an in-flight request. Only cancel() crosses executors.
-    private struct RequestCancellation: @unchecked Sendable {
-        let request: VNRequest
-        func cancel() { request.cancel() }
+    // Vision permits cancellation from another thread. Processing and results stay on the worker.
+    private final class Recognition: @unchecked Sendable {
+        private let request = VNRecognizeTextRequest()
+        private let cancelled = OSAllocatedUnfairLock(initialState: false)
+
+        init() {
+            request.recognitionLevel = .accurate
+            request.automaticallyDetectsLanguage = true
+            request.usesLanguageCorrection = true
+        }
+
+        func cancel() {
+            cancelled.withLock { $0 = true }
+            request.cancel()
+        }
+
+        func perform(on image: CGImage) throws -> String {
+            try autoreleasepool {
+                do {
+                    try checkCancellation()
+                    try VNImageRequestHandler(cgImage: image).perform([request])
+                } catch {
+                    try checkCancellation()
+                    throw error
+                }
+                let width = image.width, height = image.height
+                let lines = (request.results ?? []).lazy.compactMap { observation -> OCRLine? in
+                    guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !text.isEmpty else { return nil }
+                    return OCRLine(text: text, bounds: VNImageRectForNormalizedRect(observation.boundingBox, width, height))
+                }
+                let text = OCRLine.paragraphs(from: lines)
+                try checkCancellation()
+                guard !text.isEmpty else { throw OCRFailure.noText }
+                return text
+            }
+        }
+
+        private func checkCancellation() throws {
+            if cancelled.withLock({ $0 }) { throw CancellationError() }
+        }
     }
 }
 
