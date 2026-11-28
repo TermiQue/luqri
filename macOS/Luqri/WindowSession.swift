@@ -14,7 +14,7 @@ enum ShortcutEdit: Codable {
 enum WindowOperation: Codable {
     case translate(text: String, provider: Provider, source: Language?, target: Language)
     case recognize(UUID)
-    case usage(CloudMeter)
+    case usage(CloudMeter, forceRefresh: Bool)
 }
 
 struct WindowResult: Codable {

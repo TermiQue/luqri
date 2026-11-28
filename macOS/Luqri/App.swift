@@ -200,8 +200,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             self.pendingOCR = nil
             let text = try await pendingOCR.provider.recognize(pendingOCR.screenshot.takeImage())
             return WindowResult(text: text)
-        case .usage(let meter):
-            let usage = try await meter.read(meter.account.load())
+        case .usage(let meter, let forceRefresh):
+            let usage = try await meter.read(meter.account.load(), forceRefresh: forceRefresh)
             return WindowResult(used: usage.used, note: usage.note)
         }
     }
@@ -787,9 +787,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
                     permissions: settingsPermissions,
                     refreshPermissions: { frontendChannel.send(.refreshPermissions) },
                     requestPermission: { frontendChannel.send(.requestPermission($0)) },
-                    readUsage: { [weak self] meter in
+                    readUsage: { [weak self] meter, forceRefresh in
                         guard let self else { throw CancellationError() }
-                        let reply = try await self.request(.usage(meter))
+                        let reply = try await self.request(.usage(meter, forceRefresh: forceRefresh))
                         guard let used = reply.used else { throw CloudFailure("云服务未返回用量。") }
                         return (used, reply.note)
                     }

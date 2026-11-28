@@ -10,9 +10,9 @@ enum OCRProvider: String, CaseIterable, Identifiable, Codable {
 
     var title: String {
         switch self {
-        case .appleVision: "Apple Vision（本机）"
-        case .volcengine: "火山引擎多语种 OCR"
-        case .aliyun: "阿里云 OCR 统一识别"
+        case .appleVision: "Apple"
+        case .volcengine: "火山引擎"
+        case .aliyun: "阿里云"
         }
     }
 

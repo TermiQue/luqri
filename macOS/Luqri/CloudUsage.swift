@@ -1,6 +1,16 @@
 import CryptoKit
 import Foundation
 
+struct CloudUsageSnapshot {
+    let used: Decimal
+    let checkedAt: Date?
+
+    func needsRefresh(at now: Date) -> Bool {
+        guard let checkedAt else { return true }
+        return !(0...(12 * 3600)).contains(now.timeIntervalSince(checkedAt))
+    }
+}
+
 enum CloudMeter: String, Codable, Sendable {
     case volcengineTranslation = "volcengine-translate"
     case aliyunTranslation = "aliyun-translate"
@@ -48,12 +58,19 @@ enum CloudMeter: String, Codable, Sendable {
         }
     }
 
-    func read(_ credentials: CloudCredentials) async throws -> (used: Decimal, note: String?) {
+    func cachedUsage(_ credentials: CloudCredentials, at now: Date = .now) throws -> CloudUsageSnapshot? {
+        let url = storage(for: credentials)
+        if self == .volcengineOCR { return try VolcengineOCRUsage.cachedUsage(at: url) }
+        return try MonthlyQuota.cachedUsage(at: url, now: now)
+    }
+
+    func read(_ credentials: CloudCredentials, forceRefresh: Bool) async throws -> (used: Decimal, note: String?) {
         switch self {
-        case .volcengineTranslation: (try await Volcengine.translationQuota.read(credentials), nil)
-        case .aliyunTranslation: (try await Aliyun.translationQuota.read(credentials), nil)
-        case .aliyunOCR: (try await Aliyun.ocrQuota.read(credentials), nil)
-        case .volcengineOCR: try await VolcengineOCR.usage.read(credentials)
+        case .volcengineTranslation: (try await Volcengine.translationQuota.read(credentials, forceRefresh: forceRefresh), nil)
+        case .aliyunTranslation: (try await Aliyun.translationQuota.read(credentials, forceRefresh: forceRefresh), nil)
+        case .aliyunOCR: (try await Aliyun.ocrQuota.read(credentials, forceRefresh: forceRefresh), nil)
+        case .volcengineOCR:
+            try await VolcengineOCR.usage.read(credentials, forceRefresh: forceRefresh, persistCheckpoint: true)
         }
     }
 
@@ -88,6 +105,7 @@ actor MonthlyQuota {
     private struct Record: Codable {
         let month: String
         var used: Decimal
+        var checkedAt: Date? = nil
     }
 
     private let meter: CloudMeter
@@ -103,14 +121,22 @@ actor MonthlyQuota {
         self.storage = storage ?? meter.storage
     }
 
-    func read(_ credentials: CloudCredentials) async throws -> Decimal {
-        try await queue.run { try await self.readUsage(credentials) }
+    nonisolated static func cachedUsage(at url: URL, now: Date) throws -> CloudUsageSnapshot? {
+        guard let record = try load(at: url, month: CloudBilling.period(at: now)) else { return nil }
+        return CloudUsageSnapshot(used: record.used, checkedAt: record.checkedAt)
     }
 
-    private func readUsage(_ credentials: CloudCredentials) async throws -> Decimal {
+    func read(_ credentials: CloudCredentials, forceRefresh: Bool) async throws -> Decimal {
+        try await queue.run { try await self.readUsage(credentials, forceRefresh: forceRefresh) }
+    }
+
+    private func readUsage(_ credentials: CloudCredentials, forceRefresh: Bool) async throws -> Decimal {
         let now = Date.now
         let url = storage(credentials)
-        return try await refresh(load(url, now: now), at: url, credentials: credentials, now: now)
+        let record = try await refresh(
+            load(url, now: now), at: url, credentials: credentials, now: now, forceRefresh: forceRefresh
+        )
+        return record.used
     }
 
     func send<Value: Sendable>(
@@ -129,7 +155,7 @@ actor MonthlyQuota {
             var record = try load(url, now: now)
             try requireCapacity(record.used, amount: amount)
             do {
-                record.used = try await refresh(record, at: url, credentials: credentials, now: now)
+                record = try await refresh(record, at: url, credentials: credentials, now: now)
             } catch {
                 try Task.checkCancellation()
                 throw CloudFailure("无法确认\(meter.title)，已跳过请求。\(error.localizedDescription)")
@@ -159,25 +185,32 @@ actor MonthlyQuota {
         }
     }
 
-    private func refresh(_ record: Record, at url: URL, credentials: CloudCredentials, now: Date) async throws -> Decimal {
-        if let refresh = lastRefresh, refresh.credentials == credentials, refresh.month == record.month,
-           (0..<60).contains(now.timeIntervalSince(refresh.date)) { return record.used }
+    private func refresh(
+        _ record: Record, at url: URL, credentials: CloudCredentials, now: Date, forceRefresh: Bool = false
+    ) async throws -> Record {
+        if !forceRefresh, let refresh = lastRefresh, refresh.credentials == credentials, refresh.month == record.month,
+           (0..<60).contains(now.timeIntervalSince(refresh.date)) { return record }
 
         let observed = try await query(credentials, now)
         try Task.checkCancellation()
-        let used = max(record.used, observed)
-        if used > record.used { try save(Record(month: record.month, used: used), to: url) }
+        let updated = Record(month: record.month, used: max(record.used, observed), checkedAt: now)
+        try save(updated, to: url)
         lastRefresh = (credentials, record.month, now)
-        return used
+        return updated
     }
 
     private func load(_ url: URL, now: Date) throws -> Record {
         let month = CloudBilling.period(at: now)
+        return try Self.load(at: url, month: month) ?? Record(month: month, used: 0)
+    }
+
+    private nonisolated static func load(at url: URL, month: String) throws -> Record? {
         do {
             let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: url))
-            if record.month == month { return record }
-        } catch CocoaError.fileReadNoSuchFile {}
-        return Record(month: month, used: 0)
+            return record.month == month ? record : nil
+        } catch CocoaError.fileReadNoSuchFile {
+            return nil
+        }
     }
 
     private func save(_ record: Record, to url: URL) throws {
@@ -216,14 +249,34 @@ actor VolcengineOCRUsage {
         self.storage = storage ?? CloudMeter.volcengineOCR.storage
     }
 
-    func read(_ credentials: CloudCredentials) async throws -> (used: Decimal, note: String?) {
-        try await queue.run { try await self.readUsage(credentials) }
+    nonisolated static func cachedUsage(at url: URL) throws -> CloudUsageSnapshot? {
+        let history: History
+        do {
+            history = try JSONDecoder().decode(History.self, from: Data(contentsOf: url))
+        } catch CocoaError.fileReadNoSuchFile {
+            return nil
+        }
+        let pending = try loadPending(at: url.appendingPathExtension("pending"), excluding: history.ids)
+        return CloudUsageSnapshot(used: Decimal(history.ids.count + pending.count), checkedAt: history.synchronizedThrough)
     }
 
-    private func readUsage(_ credentials: CloudCredentials) async throws -> (used: Decimal, note: String?) {
+    func read(
+        _ credentials: CloudCredentials, forceRefresh: Bool = false, persistCheckpoint: Bool = false
+    ) async throws -> (used: Decimal, note: String?) {
+        try await queue.run {
+            try await self.readUsage(credentials, forceRefresh: forceRefresh, persistCheckpoint: persistCheckpoint)
+        }
+    }
+
+    private func readUsage(
+        _ credentials: CloudCredentials, forceRefresh: Bool, persistCheckpoint: Bool
+    ) async throws -> (used: Decimal, note: String?) {
         var current = try load(credentials, now: .now)
         defer { state = current }
-        try await refresh(&current, credentials: credentials, now: .now)
+        try await refresh(&current, credentials: credentials, now: .now, forceRefresh: forceRefresh)
+        if persistCheckpoint, current.auditError == nil, current.history.synchronizedThrough != current.persistedThrough {
+            try update(&current, history: current.history)
+        }
         let note = current.auditError.map {
             "审计暂不可用，显示已记录用量。\n\($0)"
         }
@@ -266,8 +319,10 @@ actor VolcengineOCRUsage {
         }
     }
 
-    private func refresh(_ current: inout State, credentials: CloudCredentials, now: Date) async throws {
-        if let date = current.checkedAt, (0..<60).contains(now.timeIntervalSince(date)) { return }
+    private func refresh(
+        _ current: inout State, credentials: CloudCredentials, now: Date, forceRefresh: Bool = false
+    ) async throws {
+        if !forceRefresh, let date = current.checkedAt, (0..<60).contains(now.timeIntervalSince(date)) { return }
         let start = current.history.beginsAt
         let overlap = current.history.synchronizedThrough?.addingTimeInterval(-86_400) ?? start
         let begin = max(overlap, start, now.addingTimeInterval(-90 * 86_400 + 300))
@@ -320,13 +375,18 @@ actor VolcengineOCRUsage {
             history = History(beginsAt: CloudBilling.monthStart(at: now), synchronizedThrough: nil)
             try save(history, to: url)
         }
-        var current = State(url: url, history: history, pending: [], persistedThrough: history.synchronizedThrough)
-        do {
-            let pending = try JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: current.pendingURL))
-            current.pending = pending.subtracting(history.ids)
-        } catch CocoaError.fileReadNoSuchFile {}
+        let pending = try Self.loadPending(at: url.appendingPathExtension("pending"), excluding: history.ids)
         self.credentials = credentials
-        return current
+        return State(url: url, history: history, pending: pending, persistedThrough: history.synchronizedThrough)
+    }
+
+    private nonisolated static func loadPending(at url: URL, excluding ids: Set<String>) throws -> Set<String> {
+        do {
+            let pending = try JSONDecoder().decode(Set<String>.self, from: Data(contentsOf: url))
+            return pending.subtracting(ids)
+        } catch CocoaError.fileReadNoSuchFile {
+            return []
+        }
     }
 
     private func save(_ value: some Encodable, to url: URL) throws {
