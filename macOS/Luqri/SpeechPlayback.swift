@@ -87,13 +87,23 @@ final class SpeechPlayback: NSObject, AVSpeechSynthesizerDelegate {
         default: "zh-CN"
         }
         let prefix = language.isChinese ? "zh-" : "en-"
-        let voices = AVSpeechSynthesisVoice.speechVoices().filter {
-            $0.quality == .default && $0.voiceTraits.isEmpty && $0.language.hasPrefix(prefix)
+        var best: AVSpeechSynthesisVoice?
+        var bestRank = Int.max
+        for voice in AVSpeechSynthesisVoice.speechVoices()
+        where voice.quality == .default && voice.voiceTraits.isEmpty && voice.language.hasPrefix(prefix) {
+            let rank: Int
+            if voice.language != locale {
+                rank = 3
+            } else if voice.identifier.hasPrefix("com.apple.voice.compact.") {
+                return voice
+            } else {
+                rank = voice.identifier.hasPrefix("com.apple.voice.super-compact.") ? 1 : 2
+            }
+            if rank < bestRank {
+                best = voice
+                bestRank = rank
+            }
         }
-        let matching = voices.filter { $0.language == locale }
-        return matching.first { $0.identifier.hasPrefix("com.apple.voice.compact.") }
-            ?? matching.first { $0.identifier.hasPrefix("com.apple.voice.super-compact.") }
-            ?? matching.first
-            ?? voices.first
+        return best
     }
 }

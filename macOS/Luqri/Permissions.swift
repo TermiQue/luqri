@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 
 @MainActor
-enum AppPermission: CaseIterable {
+enum AppPermission: String, CaseIterable, Codable, Sendable {
     case accessibility, screenRecording
 
     var title: String {

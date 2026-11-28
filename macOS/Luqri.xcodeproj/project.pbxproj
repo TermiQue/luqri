@@ -24,6 +24,8 @@
 		1A2B3C4D00000000000000D7 /* CloudServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000074 /* CloudServices.swift */; };
 		1A2B3C4D00000000000000D8 /* CloudOCRImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000075 /* CloudOCRImage.swift */; };
 		1A2B3C4D00000000000000D9 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000076 /* SettingsView.swift */; };
+		1A2B3C4D00000000000000DA /* SerialWorkQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000078 /* SerialWorkQueue.swift */; };
+		1A2B3C4D00000000000000DB /* WindowSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D0000000000000079 /* WindowSession.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +50,8 @@
 		1A2B3C4D0000000000000075 /* CloudOCRImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudOCRImage.swift; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000076 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1A2B3C4D0000000000000077 /* Build.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Build.xcconfig; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000078 /* SerialWorkQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerialWorkQueue.swift; sourceTree = "<group>"; };
+		1A2B3C4D0000000000000079 /* WindowSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -83,6 +87,8 @@
 				1A2B3C4D0000000000000074 /* CloudServices.swift */,
 				1A2B3C4D0000000000000075 /* CloudOCRImage.swift */,
 				1A2B3C4D0000000000000076 /* SettingsView.swift */,
+				1A2B3C4D0000000000000078 /* SerialWorkQueue.swift */,
+				1A2B3C4D0000000000000079 /* WindowSession.swift */,
 				1A2B3C4D000000000000006A /* Icons */,
 				1A2B3C4D000000000000006B /* Lucide-LICENSE.txt */,
 				1A2B3C4D000000000000006C /* Info.plist */,
@@ -162,6 +168,8 @@
 				1A2B3C4D00000000000000CD /* Volcengine.swift in Sources */,
 				1A2B3C4D00000000000000D6 /* CloudUsage.swift in Sources */,
 				1A2B3C4D00000000000000D5 /* Aliyun.swift in Sources */,
+				1A2B3C4D00000000000000DA /* SerialWorkQueue.swift in Sources */,
+				1A2B3C4D00000000000000DB /* WindowSession.swift in Sources */,
 				1A2B3C4D00000000000000D9 /* SettingsView.swift in Sources */,
 				1A2B3C4D00000000000000D8 /* CloudOCRImage.swift in Sources */,
 				1A2B3C4D00000000000000D7 /* CloudServices.swift in Sources */,

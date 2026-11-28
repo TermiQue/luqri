@@ -3,7 +3,7 @@ import Carbon
 import Observation
 import ApplicationServices
 
-enum Command: UInt32, CaseIterable {
+enum Command: UInt32, CaseIterable, Codable {
     case translate = 1
     case recognize
     case screenshotTranslate
@@ -34,7 +34,7 @@ enum Command: UInt32, CaseIterable {
     }
 }
 
-struct Shortcut: Codable, Equatable {
+struct Shortcut: Codable, Equatable, Sendable {
     let keyCode: UInt32
     let modifiers: UInt32
     let key: String
@@ -138,6 +138,8 @@ final class GlobalShortcuts {
     private let defaults: UserDefaults
     private let action: (Command) -> Void
     private let onChange: () -> Void
+    private let sendEdit: ((ShortcutEdit) -> Void)?
+    @ObservationIgnored private var suspendedForRecording = false
     @ObservationIgnored private var handler: EventHandlerRef?
     @ObservationIgnored private var references: [EventHotKeyRef] = []
     @ObservationIgnored private var recorder: Any?
@@ -146,10 +148,12 @@ final class GlobalShortcuts {
     private(set) var recording: Command?
     private(set) var message: String?
 
-    init(defaults: UserDefaults = .standard, action: @escaping (Command) -> Void, onChange: @escaping () -> Void = {}) {
+    init(defaults: UserDefaults = .standard, action: @escaping (Command) -> Void,
+         onChange: @escaping () -> Void = {}, sendEdit: ((ShortcutEdit) -> Void)? = nil) {
         self.defaults = defaults
         self.action = action
         self.onChange = onChange
+        self.sendEdit = sendEdit
         bindings = Self.defaultBindings
         let custom = defaults.data(forKey: Self.preferencesKey)
         guard let data = custom ?? defaults.data(forKey: Self.legacyPreferencesKey),
@@ -160,6 +164,39 @@ final class GlobalShortcuts {
                shortcut.modifiers == UInt32(optionKey | shiftKey) { continue }
             bindings[command] = shortcut
         }
+    }
+
+    var snapshot: ShortcutSnapshot {
+        ShortcutSnapshot(bindings: bindings, failed: failed, message: message)
+    }
+
+    func update(from snapshot: ShortcutSnapshot) {
+        bindings = snapshot.bindings
+        failed = snapshot.failed
+        message = snapshot.message
+    }
+
+    func perform(_ edit: ShortcutEdit) {
+        switch edit {
+        case .suspend:
+            guard !suspendedForRecording else { return }
+            suspendedForRecording = true
+            unregister()
+        case .resume:
+            resumeAfterRemoteRecording()
+        case .assign(let command, let shortcut):
+            assign(shortcut, to: command)
+            resumeAfterRemoteRecording()
+        case .restore:
+            restoreDefaults()
+        }
+    }
+
+    func resumeAfterRemoteRecording() {
+        guard suspendedForRecording else { return }
+        suspendedForRecording = false
+        failed = register(bindings)
+        onChange()
     }
 
     func binding(for command: Command) -> Shortcut {
@@ -200,7 +237,8 @@ final class GlobalShortcuts {
             return
         }
         stopRecording()
-        unregister()
+        if let sendEdit { sendEdit(.suspend) }
+        else { unregister() }
         recording = command
         message = nil
         recorder = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
@@ -224,7 +262,8 @@ final class GlobalShortcuts {
     func cancelRecording() {
         guard recording != nil else { return }
         stopRecording()
-        failed = register(bindings)
+        if let sendEdit { sendEdit(.resume) }
+        else { failed = register(bindings) }
         message = nil
         onChange()
     }
@@ -242,13 +281,23 @@ final class GlobalShortcuts {
             message = "该组合已用于「\(other.title)」。"
             return
         }
+        if let sendEdit {
+            stopRecording()
+            sendEdit(.assign(command, shortcut))
+            return
+        }
         var updated = bindings
         updated[command] = shortcut
         apply(updated, checking: [command])
     }
 
     func restoreDefaults() {
-        apply(Self.defaultBindings, checking: Set(Command.allCases))
+        if let sendEdit {
+            stopRecording()
+            sendEdit(.restore)
+        } else {
+            apply(Self.defaultBindings, checking: Set(Command.allCases))
+        }
     }
 
     func uninstall() {
@@ -260,6 +309,7 @@ final class GlobalShortcuts {
 
     private func apply(_ updated: [Command: Shortcut], checking required: Set<Command>) {
         stopRecording()
+        suspendedForRecording = false
         unregister()
         let conflicts = register(updated)
         if let conflict = Command.allCases.first(where: { conflicts.contains($0) && (required.contains($0) || !failed.contains($0)) }) {

@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [[ $# -gt 1 || ( $# -eq 1 && $1 != --universal ) ]]; then
-    printf '用法：%s [--universal]\n' "$0" >&2
+if [[ $# -gt 1 || ( $# -eq 1 && $1 != --universal && $1 != --arm64 ) ]]; then
+    printf '用法：%s [--universal | --arm64]\n' "$0" >&2
     exit 2
 fi
 
@@ -41,7 +41,9 @@ if [[ ${1:-} == --universal ]]; then
     done
     xcrun lipo -create "$slices/arm64" "$slices/x86_64" -output "$app/Contents/MacOS/Luqri"
 else
-    xcrun --sdk macosx swiftc "${flags[@]}" -target "$(uname -m)-apple-macos$deployment_target" \
+    arch="$(uname -m)"
+    if [[ ${1:-} == --arm64 ]]; then arch=arm64; fi
+    xcrun --sdk macosx swiftc "${flags[@]}" -target "$arch-apple-macos$deployment_target" \
         Luqri/*.swift -o "$app/Contents/MacOS/Luqri"
 fi
 
