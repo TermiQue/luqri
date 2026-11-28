@@ -1,5 +1,12 @@
 import AppKit
 import SwiftUI
+import Observation
+
+@MainActor
+@Observable
+final class SettingsPermissions {
+    var granted = Set<AppPermission>()
+}
 
 struct SettingsView: View {
     static let preferredSize = CGSize(width: 466, height: 590)
@@ -7,7 +14,11 @@ struct SettingsView: View {
     @Bindable var model: TranslationModel
     let shortcuts: GlobalShortcuts
     let credentialsChanged: (CloudAccount) -> Void
+    let ocrChanged: (OCRProvider) -> Void
+    let permissions: SettingsPermissions
+    let refreshPermissions: () -> Void
     let requestPermission: (AppPermission) -> Void
+    let readUsage: (CloudMeter) async throws -> (used: Decimal, note: String?)
     @AppStorage(OCRProvider.preferenceKey) private var ocrProvider = OCRProvider.appleVision
     @State private var account = CloudAccount.volcengine
     @State private var accessKey = ""
@@ -15,7 +26,6 @@ struct SettingsView: View {
     @State private var drafts: [CloudAccount: CloudCredentials] = [:]
     @State private var status = ""
     @State private var hasCredentials = false
-    @State private var grantedPermissions: Set<AppPermission> = []
     @State private var usageVersions: [CloudAccount: Int] = [:]
 
     var body: some View {
@@ -116,12 +126,12 @@ struct SettingsView: View {
 
             Section("系统权限") {
                 ForEach(AppPermission.allCases, id: \.self) { permission in
-                    let granted = grantedPermissions.contains(permission)
+                    let granted = permissions.granted.contains(permission)
                     LabeledContent(permission.title) {
                         Text(granted ? "已授权" : "未授权")
                             .foregroundStyle(.secondary)
                         Button(granted ? "管理…" : "授权…") {
-                            if permission.isGranted { permission.openSettings() }
+                            if granted { permission.openSettings() }
                             else { requestPermission(permission) }
                         }
                             .accessibilityLabel("\(granted ? "管理" : "授权")\(permission.title)")
@@ -138,18 +148,15 @@ struct SettingsView: View {
             refreshPermissions()
             loadCredentials()
         }
+        .onChange(of: ocrProvider) { _, provider in ocrChanged(provider) }
         .onChange(of: account) { previous, _ in
             drafts[previous] = CloudCredentials(accessKey: accessKey, secretKey: secretKey)
             loadCredentials()
         }
     }
 
-    private func refreshPermissions() {
-        grantedPermissions = Set(AppPermission.allCases.filter(\.isGranted))
-    }
-
     private func usageRing(_ meter: CloudMeter) -> some View {
-        CloudUsageRing(meter: meter)
+        CloudUsageRing(meter: meter, readUsage: readUsage)
             .id(UsageIdentity(meter: meter, version: usageVersions[meter.account, default: 0]))
     }
 
@@ -262,6 +269,7 @@ private struct CloudUsageRing: View {
     private static let hoverWidth: CGFloat = 22
 
     let meter: CloudMeter
+    let readUsage: (CloudMeter) async throws -> (used: Decimal, note: String?)
     @State private var used: Decimal?
     @State private var detail = "正在查询用量…"
     @State private var loading = true
@@ -315,8 +323,7 @@ private struct CloudUsageRing: View {
     private func refresh() async {
         defer { loading = false }
         do {
-            let credentials = try meter.account.load()
-            let usage = try await meter.read(credentials)
+            let usage = try await readUsage(meter)
             try Task.checkCancellation()
             used = usage.used
             detail = [meter.detail(usage.used), usage.note].compactMap { $0 }.joined(separator: "\n")

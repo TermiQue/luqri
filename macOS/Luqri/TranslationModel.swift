@@ -3,7 +3,7 @@ import NaturalLanguage
 import Observation
 import Translation
 
-enum Provider: String, CaseIterable, Identifiable {
+enum Provider: String, CaseIterable, Identifiable, Codable {
     case apple, volcengine, aliyun
 
     var id: Self { self }
@@ -24,7 +24,7 @@ enum Provider: String, CaseIterable, Identifiable {
     }
 }
 
-enum Language: String, CaseIterable, Identifiable {
+enum Language: String, CaseIterable, Identifiable, Codable {
     case simplifiedChinese = "zh-Hans"
     case traditionalChinese = "zh-Hant"
     case english = "en"
@@ -88,6 +88,7 @@ final class TranslationModel {
     }
 
     private let defaults: UserDefaults
+    @ObservationIgnored private let translateCloud: (TranslationJob) async throws -> String
 
     private(set) var text = ""
     private(set) var hasText = false
@@ -98,9 +99,16 @@ final class TranslationModel {
         didSet { if target != oldValue { changeLanguages() } }
     }
 
+    @Observable
+    fileprivate final class OutputSlot {
+        var value = TranslationOutput.idle
+    }
+
     private var selectedProviders: Set<Provider>
-    private var outputs: [Provider: TranslationOutput] = [:]
-    private var activeJobs: [Provider: TranslationJob] = [:]
+    private let outputs = Dictionary(uniqueKeysWithValues: Provider.allCases.map { ($0, OutputSlot()) })
+    @ObservationIgnored private var activeJobs: [Provider: UUID] = [:]
+    private(set) var isTranslating = false
+    private(set) var appleJob: TranslationJob?
     private var inputStatus = InputStatus.idle
     @ObservationIgnored private var inputTask: Task<Void, Never>?
     @ObservationIgnored private var cloudTasks: [Provider: Task<Void, Never>] = [:]
@@ -111,11 +119,10 @@ final class TranslationModel {
         if case .failed(let message) = inputStatus { return message }
         return nil
     }
-    var isTranslating: Bool { !activeJobs.isEmpty }
-    var appleJob: TranslationJob? { activeJobs[.apple] }
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, translateCloud: @escaping (TranslationJob) async throws -> String) {
         self.defaults = defaults
+        self.translateCloud = translateCloud
         if let enabled = defaults.stringArray(forKey: "enabledTranslationProviders") {
             selectedProviders = Set(enabled.compactMap(Provider.init(rawValue:)))
         } else {
@@ -132,14 +139,16 @@ final class TranslationModel {
         } else {
             selectedProviders.remove(provider)
             activeJobs[provider] = nil
-            outputs[provider] = nil
+            if provider == .apple { appleJob = nil }
+            outputs[provider]?.value = .idle
             cloudTasks.removeValue(forKey: provider)?.cancel()
+            if activeJobs.isEmpty, isTranslating { isTranslating = false }
         }
         defaults.set(enabledProviders.map(\.rawValue), forKey: "enabledTranslationProviders")
     }
 
     func output(for provider: Provider) -> TranslationOutput {
-        outputs[provider] ?? .idle
+        outputs[provider]?.value ?? .idle
     }
 
     func begin(with input: String) {
@@ -169,24 +178,24 @@ final class TranslationModel {
 
     func translate() {
         guard !selectedProviders.isEmpty,
-              !isTranslating || !selectedProviders.allSatisfy({ outputs[$0] != nil }) else { return }
+              !isTranslating || !selectedProviders.allSatisfy({ output(for: $0) != .idle }) else { return }
         guard hasText, let range = CloudText.trimmedRange(in: text[...]) else { return }
         let input = range == text.startIndex..<text.endIndex ? text : String(text[range])
         clearResults()
         let destination = target ?? automaticTarget(for: input)
+        isTranslating = true
         for provider in enabledProviders {
             let job = TranslationJob(text: input, provider: provider, source: source, target: destination)
-            activeJobs[provider] = job
-            outputs[provider] = .translating
-            let translate: @Sendable (TranslationJob) async throws -> String
-            switch provider {
-            case .apple: continue
-            case .volcengine: translate = Volcengine.translate
-            case .aliyun: translate = Aliyun.translate
+            activeJobs[provider] = job.id
+            outputs[provider]?.value = .translating
+            if provider == .apple {
+                appleJob = job
+                continue
             }
             cloudTasks[provider] = Task { [weak self] in
+                guard let translateCloud = self?.translateCloud else { return }
                 do {
-                    let translation = try await translate(job)
+                    let translation = try await translateCloud(job)
                     self?.finish(job, with: .success(translation))
                 } catch {
                     self?.finish(job, with: .failure(error))
@@ -246,22 +255,25 @@ final class TranslationModel {
     }
 
     private func clearResults() {
-        guard !outputs.isEmpty else { return }
         activeJobs.removeAll()
+        if isTranslating { isTranslating = false }
+        if appleJob != nil { appleJob = nil }
         for task in cloudTasks.values { task.cancel() }
         cloudTasks.removeAll()
-        outputs.removeAll()
+        for slot in outputs.values where slot.value != .idle { slot.value = .idle }
     }
 
     private func finish(_ job: TranslationJob, with outcome: Result<String, any Error>) {
-        guard activeJobs[job.provider]?.id == job.id else { return }
+        guard activeJobs[job.provider] == job.id else { return }
         activeJobs[job.provider] = nil
+        if activeJobs.isEmpty { isTranslating = false }
+        if job.provider == .apple { appleJob = nil }
         cloudTasks[job.provider] = nil
         switch outcome {
         case .success(let translation):
-            outputs[job.provider] = .translated(translation, language: job.target)
+            outputs[job.provider]?.value = .translated(translation, language: job.target)
         case .failure(let error):
-            outputs[job.provider] = .failed(Self.message(for: error))
+            outputs[job.provider]?.value = .failed(Self.message(for: error))
         }
     }
 

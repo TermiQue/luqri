@@ -1,18 +1,11 @@
 import AppKit
+import Darwin
 import ImageIO
 import SwiftUI
 
 @main
 @MainActor
 enum LuqriApp {
-    static func workspaceActivationConfiguration() -> NSWorkspace.OpenConfiguration {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        configuration.addsToRecentItems = false
-        configuration.allowsRunningApplicationSubstitution = false
-        return configuration
-    }
-
     static func loadAppIcon(size: NSSize) -> NSImage? {
         guard let iconFile = Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
               let url = Bundle.main.url(forResource: iconFile, withExtension: nil),
@@ -34,8 +27,11 @@ enum LuqriApp {
     }
 
     static func main() {
+        signal(SIGPIPE, SIG_IGN)
         let application = NSApplication.shared
-        let delegate = AppController()
+        let frontend = CommandLine.arguments.dropFirst().first == WindowProcess.launchArgument
+        let channel = frontend ? WindowChannel(input: .standardInput, output: .standardOutput) : nil
+        let delegate = AppController(frontendChannel: channel)
         application.delegate = delegate
         application.setActivationPolicy(.accessory)
         withExtendedLifetime(delegate) { application.run() }
@@ -44,13 +40,30 @@ enum LuqriApp {
 
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation {
-    private let model = TranslationModel()
-    private let screenshotCapture = ScreenshotCapture()
+    private let frontendChannel: WindowChannel?
+    private lazy var model = TranslationModel { [weak self] job in
+        guard let self else { throw CancellationError() }
+        let reply = try await self.request(.translate(text: job.text, provider: job.provider,
+                                                       source: job.source, target: job.target))
+        guard let text = reply.text else { throw CloudFailure("翻译服务未返回译文。") }
+        return text
+    }
+    private lazy var screenshotCapture = ScreenshotCapture()
+    private lazy var settingsPermissions = SettingsPermissions()
+    private lazy var selectedOCR = OCRProvider.selected()
+    private var frontendProcess: WindowProcess?
+    private var frontendRequests: [UUID: CheckedContinuation<WindowResult, any Error>] = [:]
+    private var coreRequests: [UUID: Task<Void, Never>] = [:]
+    private var pendingOCR: (id: UUID, provider: OCRProvider, screenshot: Screenshot)?
+    private var frontendExiting = false
     private var statusItem: NSStatusItem?
     private var shortcuts: GlobalShortcuts?
     private var applicationKeyMonitor: Any?
     private var ocrUsageTracking: Task<Void, Never>?
     private var translationPanel: UtilityPanel?
+    private var translationScreenshot: UUID?
+    private var translationResize: Task<Void, Never>?
+    private var pendingTranslationSize: CGSize?
     private var translationHasTakenFocus = false
     private var translationPinned = false
     private var settingsWindow: NSWindow?
@@ -60,20 +73,213 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private var work: Task<Void, Never>?
     private var permissionPrompt: PermissionPrompt?
 
+    init(frontendChannel: WindowChannel?) {
+        self.frontendChannel = frontendChannel
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let shortcuts = GlobalShortcuts(
-            action: { [weak self] command in self?.perform(command) },
-            onChange: { [weak self] in self?.refreshMenuShortcuts() }
-        )
-        self.shortcuts = shortcuts
-        shortcuts.install()
         buildApplicationMenu()
-        buildMenu()
         applicationKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             return self.handleApplicationKey(event)
         }
-        scheduleOCRUsageTracking()
+
+        if let frontendChannel {
+            shortcuts = GlobalShortcuts(action: { _ in }, sendEdit: { [weak frontendChannel] edit in
+                frontendChannel?.send(.shortcutEdit(edit))
+            })
+            frontendChannel.start(receive: { [weak self] message in
+                self?.handleFrontendMessage(message)
+            }, disconnect: { [weak self] in
+                self?.exitFrontend()
+            })
+        } else {
+            let shortcuts = GlobalShortcuts(
+                action: { [weak self] command in self?.perform(command) },
+                onChange: { [weak self] in self?.shortcutsChanged() }
+            )
+            self.shortcuts = shortcuts
+            shortcuts.install()
+            buildMenu()
+            scheduleOCRUsageTracking()
+        }
+    }
+
+    private func openFrontend(_ message: WindowMessage, id: UUID) {
+        do {
+            let session: WindowProcess
+            if let frontendProcess {
+                session = frontendProcess
+            } else {
+                guard let executable = Bundle.main.executableURL else {
+                    throw CloudFailure("找不到 Luqri 界面程序。")
+                }
+                session = try WindowProcess(executable: executable)
+                frontendProcess = session
+                session.channel.start(receive: { [weak self, weak session] message in
+                    guard let self, let session, self.frontendProcess === session else { return }
+                    self.handleCoreMessage(message, session: session)
+                }, disconnect: { [weak self, weak session] in
+                    guard let self, let session else { return }
+                    self.frontendDisconnected(session)
+                })
+                if let shortcuts { session.channel.send(.shortcuts(shortcuts.snapshot)) }
+                sendPermissionStatus(to: session)
+            }
+            session.opening.append((id, message))
+            if !session.closing { session.channel.send(message) }
+        } catch {
+            pendingOCR = nil
+            showOCRError("无法打开 Luqri 界面。\(error.localizedDescription)", at: NSEvent.mouseLocation)
+        }
+    }
+
+    private func frontendDisconnected(_ session: WindowProcess) {
+        guard frontendProcess === session else { return }
+        frontendProcess = nil
+        session.channel.close()
+        for task in coreRequests.values { task.cancel() }
+        coreRequests.removeAll()
+        shortcuts?.resumeAfterRemoteRecording()
+
+        if session.closing, session.mayRetryOpening, !session.opening.isEmpty {
+            for opening in session.opening { openFrontend(opening.message, id: opening.id) }
+            frontendProcess?.mayRetryOpening = false
+        } else {
+            pendingOCR = nil
+            if !session.opening.isEmpty {
+                showOCRError("无法打开 Luqri 界面，请重试。", at: NSEvent.mouseLocation)
+            }
+        }
+    }
+
+    private func handleCoreMessage(_ message: WindowMessage, session: WindowProcess) {
+        switch message {
+        case .opened(let id): session.opening.removeAll { $0.id == id }
+        case .closing: session.closing = true
+        case .discardScreenshot(let id):
+            if pendingOCR?.id == id { pendingOCR = nil }
+        case .quit: quit()
+        case .shortcutEdit(let edit): shortcuts?.perform(edit)
+        case .refreshPermissions: sendPermissionStatus(to: session)
+        case .requestPermission(let permission): showPermissionPrompt(permission)
+        case .credentialsChanged(let account):
+            if account == .volcengine { scheduleOCRUsageTracking() }
+        case .ocrChanged(let provider): selectedOCR = provider
+        case .request(let id, let operation):
+            guard coreRequests[id] == nil else { return }
+            coreRequests[id] = Task { [weak self, weak session] in
+                guard let self else { return }
+                let reply: WindowResult
+                do {
+                    reply = try await self.perform(operation)
+                } catch {
+                    reply = WindowResult(error: error.localizedDescription)
+                }
+                guard !Task.isCancelled, let session, self.frontendProcess === session else { return }
+                self.coreRequests[id] = nil
+                session.channel.send(.result(id, reply))
+            }
+        case .cancel(let id): coreRequests.removeValue(forKey: id)?.cancel()
+        default: break
+        }
+    }
+
+    private func perform(_ operation: WindowOperation) async throws -> WindowResult {
+        try Task.checkCancellation()
+        switch operation {
+        case .translate(let text, let provider, let source, let target):
+            let job = TranslationJob(text: text, provider: provider, source: source, target: target)
+            switch provider {
+            case .volcengine: return WindowResult(text: try await Volcengine.translate(job))
+            case .aliyun: return WindowResult(text: try await Aliyun.translate(job))
+            case .apple: throw CloudFailure("Apple 翻译需要翻译窗口。")
+            }
+        case .recognize(let id):
+            guard let pendingOCR, pendingOCR.id == id else { throw CancellationError() }
+            self.pendingOCR = nil
+            let text = try await pendingOCR.provider.recognize(pendingOCR.screenshot.takeImage())
+            return WindowResult(text: text)
+        case .usage(let meter):
+            let usage = try await meter.read(meter.account.load())
+            return WindowResult(used: usage.used, note: usage.note)
+        }
+    }
+
+    private func handleFrontendMessage(_ message: WindowMessage) {
+        guard !frontendExiting else { return }
+        switch message {
+        case .showSettings(let id):
+            showSettings()
+            frontendChannel?.send(.opened(id))
+        case .showTranslation(let id, let input, let screenshot):
+            if let screenshot {
+                showTranslation(appearance: NSAppearance(named: .aqua), screenshot: screenshot) { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    let reply = try await self.request(.recognize(screenshot))
+                    guard let text = reply.text else { throw OCRFailure.noText }
+                    return text
+                }
+            } else {
+                showTranslation(input)
+            }
+            frontendChannel?.send(.opened(id))
+        case .closeTranslation: closeTranslation()
+        case .quit: exitFrontend()
+        case .shortcuts(let snapshot): shortcuts?.update(from: snapshot)
+        case .permissions(let granted): settingsPermissions.granted = granted
+        case .result(let id, let result):
+            guard let pending = frontendRequests.removeValue(forKey: id) else { return }
+            if let error = result.error { pending.resume(throwing: CloudFailure(error)) }
+            else { pending.resume(returning: result) }
+        default: break
+        }
+    }
+
+    private func request(_ operation: WindowOperation) async throws -> WindowResult {
+        guard let frontendChannel, !frontendExiting else { throw CancellationError() }
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                frontendRequests[id] = continuation
+                frontendChannel.send(.request(id, operation))
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self, let pending = self.frontendRequests.removeValue(forKey: id) else { return }
+                pending.resume(throwing: CancellationError())
+                self.frontendChannel?.send(.cancel(id))
+            }
+        }
+    }
+
+    private func sendPermissionStatus(to session: WindowProcess) {
+        session.channel.send(.permissions(Set(AppPermission.allCases.filter(\.isGranted))))
+    }
+
+    private func shortcutsChanged() {
+        refreshMenuShortcuts()
+        if let shortcuts { frontendProcess?.channel.send(.shortcuts(shortcuts.snapshot)) }
+    }
+
+    private func exitFrontendIfIdle() {
+        guard frontendChannel != nil, translationPanel == nil, settingsWindow == nil else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.translationPanel == nil, self.settingsWindow == nil else { return }
+            self.exitFrontend()
+        }
+    }
+
+    private func exitFrontend() {
+        guard let frontendChannel, !frontendExiting else { return }
+        frontendExiting = true
+        for continuation in frontendRequests.values { continuation.resume(throwing: CancellationError()) }
+        frontendRequests.removeAll()
+        frontendChannel.send(.closing)
+        frontendChannel.close {
+            NSApp.terminate(nil)
+        }
     }
 
     private func scheduleOCRUsageTracking() {
@@ -132,12 +338,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     func applicationWillTerminate(_ notification: Notification) {
         ocrUsageTracking?.cancel()
+        if let session = frontendProcess {
+            session.channel.send(.quit)
+            session.channel.close()
+        }
         shortcuts?.uninstall()
         if let applicationKeyMonitor { NSEvent.removeMonitor(applicationKeyMonitor) }
     }
 
     func applicationDidChangeScreenParameters(_ notification: Notification) {
-        screenshotCapture.invalidateContentFilter()
+        if frontendChannel == nil { screenshotCapture.invalidateContentFilter() }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -292,7 +502,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if let command = Command(rawValue: UInt32(sender.tag)) { perform(command) }
     }
 
-    @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func quit() {
+        if let frontendChannel { frontendChannel.send(.quit) }
+        else { NSApp.terminate(nil) }
+    }
 
     private func perform(_ command: Command) {
         cancelWork()
@@ -307,9 +520,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             }
         case .screenshotTranslate:
             captureForOCR(keepsFocus: true) { [weak self] provider, screenshot in
-                self?.showTranslation(appearance: NSAppearance(named: .aqua)) {
-                    try await provider.recognize(screenshot.takeImage())
-                }
+                guard let self else { return }
+                let id = UUID()
+                self.pendingOCR = (id, provider, screenshot)
+                self.openFrontend(.showTranslation(id, input: nil, screenshot: id), id: id)
             }
         }
     }
@@ -317,6 +531,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private func cancelWork() {
         work?.cancel()
         work = nil
+        pendingOCR = nil
         screenshotCapture.cancelSelection()
         clearFeedback()
     }
@@ -328,7 +543,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
         closePermissionPrompt()
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
-              pid != ProcessInfo.processInfo.processIdentifier else {
+              pid != ProcessInfo.processInfo.processIdentifier,
+              pid != frontendProcess?.process.processIdentifier else {
             showTranslation()
             return
         }
@@ -358,15 +574,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
         closePermissionPrompt()
         let previousApp = keepsFocus ? NSWorkspace.shared.frontmostApplication : nil
-        closeTranslation()
-        let provider = OCRProvider.selected()
+        frontendProcess?.channel.send(.closeTranslation)
+        let provider = selectedOCR
         work = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             var anchor = NSEvent.mouseLocation
             defer { if !Task.isCancelled { self.work = nil } }
             do {
                 guard let screenshot = try await self.screenshotCapture.capture(
-                    keepsFocus: keepsFocus, maximumPixelDimension: provider.maximumCaptureDimension
+                    keepsFocus: keepsFocus, maximumPixelDimension: provider.maximumCaptureDimension,
+                    excluding: self.frontendProcess?.process.processIdentifier
                 ) else { return }
                 try Task.checkCancellation()
                 anchor = screenshot.anchor
@@ -404,13 +621,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     private func showTranslation(
-        _ input: String? = nil, appearance: NSAppearance? = nil,
+        _ input: String? = nil, appearance: NSAppearance? = nil, screenshot: UUID? = nil,
         loadInput: (() async throws -> String)? = nil
     ) {
+        guard frontendChannel != nil else {
+            let id = UUID()
+            openFrontend(.showTranslation(id, input: input, screenshot: nil), id: id)
+            return
+        }
         let screen = NSScreen.main ?? NSScreen.screens.first
         settingsAwaitingFocus = nil
-        closeTranslation()
-        let panel = UtilityPanel(contentRect: .zero, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
+        closeTranslation(checkForExit: false)
+        let panel = UtilityPanel(
+            contentRect: .zero, styleMask: [.borderless, .fullSizeContentView],
+            backing: .buffered, defer: false
+        )
         panel.appearance = appearance
         panel.level = .floating
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .ignoresCycle]
@@ -420,11 +645,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.delegate = self
         panel.isMovableByWindowBackground = true
+        panel.delegate = self
         panel.title = "Luqri 翻译"
         panel.onEscape = { [weak self] in self?.closeTranslation() }
-        panel.onEditorReturn = { [weak model] in
+        panel.onEditorReturn = { [weak model = model] in
             guard let model, !model.enabledProviders.isEmpty,
                   model.hasText else { return false }
             model.translate()
@@ -437,10 +662,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             openSettings: { [weak self] in self?.showSettings() },
             setPinned: { [weak self] pinned in self?.translationPinned = pinned },
             resize: { [weak self, weak panel] size in
-                Task { @MainActor in
-                    guard let self, let panel, self.translationPanel === panel else { return }
-                    self.resizeTranslation(panel, contentSize: size)
-                }
+                guard let panel else { return }
+                self?.scheduleTranslationResize(panel, size: size)
             }
         )
         let hosting = NSHostingController(rootView: view.clipShape(RoundedRectangle(cornerRadius: TranslationView.cornerRadius)))
@@ -459,10 +682,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             panel.center()
         }
         translationPanel = panel
+        translationScreenshot = screenshot
         panel.orderFrontRegardless()
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
-        if !NSApp.isActive { requestWorkspaceActivation() }
+        if !NSApp.isActive { NSRunningApplication.current.activate() }
     }
 
     private func translationFrame(contentSize: CGSize, screen: CGRect, visible: CGRect) -> CGRect {
@@ -477,6 +701,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         )
     }
 
+    private func scheduleTranslationResize(_ panel: UtilityPanel, size: CGSize) {
+        if let translationPanel, translationPanel !== panel { return }
+        pendingTranslationSize = size
+        guard translationResize == nil else { return }
+        translationResize = Task { @MainActor [weak self, weak panel] in
+            guard !Task.isCancelled, let self else { return }
+            self.translationResize = nil
+            let size = self.pendingTranslationSize
+            self.pendingTranslationSize = nil
+            guard let panel, let size, self.translationPanel === panel else { return }
+            self.resizeTranslation(panel, contentSize: size)
+        }
+    }
+
     private func resizeTranslation(_ panel: UtilityPanel, contentSize: CGSize) {
         guard contentSize.height > 0, abs(panel.frame.height - contentSize.height) >= 1 else { return }
         let frame = panel.frame
@@ -488,15 +726,23 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panel.setFrame(CGRect(x: frame.minX, y: bottom, width: frame.width, height: height), display: true)
     }
 
-    private func closeTranslation() {
+    private func closeTranslation(checkForExit: Bool = true) {
+        translationResize?.cancel()
+        translationResize = nil
+        pendingTranslationSize = nil
         let panel = translationPanel
         translationPanel = nil
+        if let translationScreenshot {
+            frontendChannel?.send(.discardScreenshot(translationScreenshot))
+            self.translationScreenshot = nil
+        }
         translationHasTakenFocus = false
         translationPinned = false
         panel?.delegate = nil
         panel?.close()
         panel?.contentViewController = nil
-        model.reset()
+        if panel != nil { model.reset() }
+        if checkForExit { exitFrontendIfIdle() }
     }
 
     private func dismissUnpinnedTranslation() {
@@ -505,9 +751,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, NSApp.isActive else { return }
+        guard let window = notification.object as? NSWindow else { return }
         if window === translationPanel { translationHasTakenFocus = true }
-        if window === settingsAwaitingFocus { settingsAwaitingFocus = nil }
+        if window === settingsAwaitingFocus, NSApp.isActive { settingsAwaitingFocus = nil }
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -515,6 +761,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     @objc private func showSettings() {
+        guard let frontendChannel else {
+            let id = UUID()
+            openFrontend(.showSettings(id), id: id)
+            return
+        }
         guard let shortcuts else { return }
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) ?? NSScreen.main
@@ -522,24 +773,34 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if let settingsWindow {
             window = settingsWindow
         } else {
-            let controller = NSHostingController(rootView: SettingsView(
-                model: model, shortcuts: shortcuts, credentialsChanged: { [weak self] account in
-                    if account == .volcengine { self?.scheduleOCRUsageTracking() }
-                }
-            ) { [weak self] permission in
-                self?.showPermissionPrompt(permission)
-            })
-            controller.sizingOptions = []
-            window = NSWindow(
-                contentRect: CGRect(origin: .zero, size: SettingsView.preferredSize),
-                styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false
-            )
-            window.contentViewController = controller
-            window.initialFirstResponder = controller.view
-            window.title = "Luqri 设置"
-            window.collectionBehavior = [.managed, .primary, .moveToActiveSpace]
-            window.isReleasedWhenClosed = false
-            window.delegate = self
+            window = autoreleasepool {
+                let controller = NSHostingController(rootView: SettingsView(
+                    model: model, shortcuts: shortcuts,
+                    credentialsChanged: { frontendChannel.send(.credentialsChanged($0)) },
+                    ocrChanged: { frontendChannel.send(.ocrChanged($0)) },
+                    permissions: settingsPermissions,
+                    refreshPermissions: { frontendChannel.send(.refreshPermissions) },
+                    requestPermission: { frontendChannel.send(.requestPermission($0)) },
+                    readUsage: { [weak self] meter in
+                        guard let self else { throw CancellationError() }
+                        let reply = try await self.request(.usage(meter))
+                        guard let used = reply.used else { throw CloudFailure("云服务未返回用量。") }
+                        return (used, reply.note)
+                    }
+                ))
+                controller.sizingOptions = []
+                let window = NSWindow(
+                    contentRect: CGRect(origin: .zero, size: SettingsView.preferredSize),
+                    styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: true
+                )
+                window.contentViewController = controller
+                window.initialFirstResponder = controller.view
+                window.title = "Luqri 设置"
+                window.collectionBehavior = [.managed, .primary, .moveToActiveSpace]
+                window.isReleasedWhenClosed = false
+                window.delegate = self
+                return window
+            }
             settingsWindow = window
         }
         let frame = screen.map { settingsFrame(for: window, screen: $0.frame, visible: $0.visibleFrame) }
@@ -556,18 +817,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     private func focusSettings(_ window: NSWindow) {
         settingsAwaitingFocus = window
-        if NSApp.activationPolicy() != .regular, NSApp.setActivationPolicy(.regular) {
-            let tile = NSApp.dockTile
-            if tile.contentView == nil, let artwork = LuqriApp.loadAppIcon(size: tile.size) {
-                let icon = NSImageView(frame: CGRect(origin: .zero, size: tile.size))
-                icon.image = artwork
-                icon.imageScaling = .scaleProportionallyUpOrDown
-                icon.autoresizingMask = [.width, .height]
-                NSApp.applicationIconImage = artwork
-                tile.contentView = icon
-            }
-            tile.display()
-        }
+        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.orderFrontRegardless()
         NSApp.activate()
@@ -575,14 +825,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if NSApp.isActive {
             if window.isKeyWindow { settingsAwaitingFocus = nil }
         } else {
-            requestWorkspaceActivation()
+            NSRunningApplication.current.activate()
         }
-    }
-
-    private func requestWorkspaceActivation() {
-        NSWorkspace.shared.openApplication(
-            at: Bundle.main.bundleURL, configuration: LuqriApp.workspaceActivationConfiguration()
-        )
     }
 
     private func settingsFrame(for window: NSWindow, screen: CGRect, visible: CGRect) -> CGRect {
@@ -596,12 +840,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSWindow) === settingsWindow {
-            shortcuts?.cancelRecording()
-            settingsAwaitingFocus = nil
-            settingsWindow = nil
-            NSApp.setActivationPolicy(.accessory)
-        }
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        shortcuts?.cancelRecording()
+        settingsAwaitingFocus = nil
+        settingsWindow = nil
+        window.delegate = nil
+        window.initialFirstResponder = nil
+        window.makeFirstResponder(nil)
+        window.contentViewController = nil
+        window.contentView = nil
+        NSApp.setActivationPolicy(.accessory)
+        exitFrontendIfIdle()
     }
 
     private func showOCRError(_ message: String, at anchor: CGPoint) {
@@ -618,7 +867,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panel.hidesOnDeactivate = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        let content = NSHostingView(rootView: OCRErrorView(message: message))
+        let label = NSTextField(labelWithString: message)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        let icon = LucideIcon.menuImage("x", size: 16).map(NSImageView.init(image:))
+        let content = NSStackView(views: icon.map { [$0, label] } ?? [label])
+        content.alignment = .centerY
+        content.spacing = 8
+        content.edgeInsets = NSEdgeInsets(top: 9, left: 13, bottom: 9, right: 13)
+        content.wantsLayer = true
+        content.layer?.backgroundColor = NSColor.white.cgColor
+        content.layer?.cornerRadius = 9
         panel.contentView = content
         position(panel, contentSize: content.fittingSize, at: anchor)
         feedbackPanel = panel

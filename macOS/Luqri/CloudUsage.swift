@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-enum CloudMeter: String, Sendable {
+enum CloudMeter: String, Codable, Sendable {
     case volcengineTranslation = "volcengine-translate"
     case aliyunTranslation = "aliyun-translate"
     case volcengineOCR = "volcengine-ocr"

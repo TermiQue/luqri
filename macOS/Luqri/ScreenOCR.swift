@@ -2,7 +2,7 @@ import Foundation
 import os
 import Vision
 
-enum OCRProvider: String, CaseIterable, Identifiable {
+enum OCRProvider: String, CaseIterable, Identifiable, Codable {
     case appleVision, volcengine, aliyun
 
     static let preferenceKey = "ocrProvider"

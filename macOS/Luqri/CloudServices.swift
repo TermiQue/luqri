@@ -1,6 +1,6 @@
 import Foundation
 
-enum CloudAccount: String, CaseIterable, Identifiable {
+enum CloudAccount: String, CaseIterable, Identifiable, Codable {
     case volcengine, aliyun
 
     var id: Self { self }

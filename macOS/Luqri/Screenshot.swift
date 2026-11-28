@@ -35,7 +35,7 @@ final class ScreenshotCapture {
     private let overlay = SelectionOverlay()
     private let captures = SerialWorkQueue()
     private var selectionID: UUID?
-    private var cachedFilter: (displayID: CGDirectDisplayID, filter: SCContentFilter)?
+    private var cachedFilter: (displayID: CGDirectDisplayID, frontendPID: pid_t?, filter: SCContentFilter)?
     private var displayConfiguration = UUID()
 
     func invalidateContentFilter() {
@@ -44,7 +44,7 @@ final class ScreenshotCapture {
     }
 
     func capture(
-        keepsFocus: Bool = false, maximumPixelDimension: Int? = nil
+        keepsFocus: Bool = false, maximumPixelDimension: Int? = nil, excluding frontendPID: pid_t? = nil
     ) async throws -> Screenshot? {
         try Task.checkCancellation()
         guard AppPermission.screenRecording.isGranted else {
@@ -53,7 +53,7 @@ final class ScreenshotCapture {
         guard let selection = try await selectRegion(keepsFocus: keepsFocus) else { return nil }
         do {
             let image = try await captures.run {
-                try await self.captureImage(selection, maximumPixelDimension: maximumPixelDimension)
+                try await self.captureImage(selection, maximumPixelDimension: maximumPixelDimension, excluding: frontendPID)
             }
             try Task.checkCancellation()
             return Screenshot(image: image, anchor: selection.anchor)
@@ -104,9 +104,9 @@ final class ScreenshotCapture {
     }
 
     private func captureImage(
-        _ selection: ScreenSelection, maximumPixelDimension: Int?
+        _ selection: ScreenSelection, maximumPixelDimension: Int?, excluding frontendPID: pid_t?
     ) async throws -> CGImage {
-        if let cachedFilter, cachedFilter.displayID == selection.displayID {
+        if let cachedFilter, cachedFilter.displayID == selection.displayID, cachedFilter.frontendPID == frontendPID {
             do {
                 return try await Self.captureImage(selection, filter: cachedFilter.filter, limit: maximumPixelDimension)
             } catch {
@@ -126,11 +126,13 @@ final class ScreenshotCapture {
         }
 
         let pid = ProcessInfo.processInfo.processIdentifier
-        let ownApplications = contents.applications.filter { $0.processID == pid }
+        let ownApplications = contents.applications.filter { $0.processID == pid || $0.processID == frontendPID }
         let filter = SCContentFilter(display: display, excludingApplications: ownApplications, exceptingWindows: [])
         let image = try await Self.captureImage(selection, filter: filter, limit: maximumPixelDimension)
-        if generation == displayConfiguration, !Task.isCancelled, !ownApplications.isEmpty {
-            cachedFilter = (display.displayID, filter)
+        // Cache only filters that can exclude both processes if their windows reappear.
+        let expectedApplications = frontendPID == nil ? 1 : 2
+        if generation == displayConfiguration, !Task.isCancelled, ownApplications.count == expectedApplications {
+            cachedFilter = (display.displayID, frontendPID, filter)
         }
         return image
     }
@@ -191,26 +193,11 @@ private final class SelectionOverlay {
 
     private var windows: [UtilityPanel] = []
     private var completion: ((ScreenSelection?) -> Void)?
-    private var activationTask: Task<Void, Never>?
     private var hasSelectionCursor = false
 
     func begin(completion: @escaping (ScreenSelection?) -> Void) {
         self.completion = completion
-        if NSApp.isActive {
-            show()
-            return
-        }
-
-        // A global shortcut can arrive while a different app owns the system cursor.
-        activationTask = Task { [weak self] in
-            guard !Task.isCancelled else { return }
-            _ = try? await NSWorkspace.shared.openApplication(
-                at: Bundle.main.bundleURL, configuration: LuqriApp.workspaceActivationConfiguration()
-            )
-            guard !Task.isCancelled, let self else { return }
-            self.activationTask = nil
-            self.show()
-        }
+        show()
     }
 
     private func show() {
@@ -248,6 +235,7 @@ private final class SelectionOverlay {
             return
         }
         NSApp.activate()
+        if !NSApp.isActive { NSRunningApplication.current.activate() }
         keyWindow.makeKeyAndOrderFront(nil)
         Self.cursor.push()
         hasSelectionCursor = true
@@ -258,8 +246,6 @@ private final class SelectionOverlay {
     }
 
     private func finish(_ selection: ScreenSelection?) {
-        activationTask?.cancel()
-        activationTask = nil
         let callback = completion
         completion = nil
         for window in windows {

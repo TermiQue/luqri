@@ -660,19 +660,3 @@ private struct LoadingIndicator: View {
         }
     }
 }
-
-struct OCRErrorView: View {
-    let message: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            LucideIcon(name: "x")
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .fixedSize()
-        }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 9)
-        .background(.white, in: RoundedRectangle(cornerRadius: 9))
-    }
-}
